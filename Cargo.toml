@@ -1,0 +1,15 @@
+[package]
+name = "ADA_Standards"
+version = "0.1.0"
+edition = "2024"
+authors = ["Francesco Abate "]
+license = "MIT"
+description = "A library to help you handle checks on your ADA projects, especially good to build scripts to check coding standards conformity."
+keywords = ["string", "manipulation", "utility", "ADA", "Code", "Coding", "Standard"]
+categories = ["string-processing", "utilities", "Ast"]
+
+[dependencies]
+indextree = "4.7.3"
+regex = "1.11.1"
+lazy_static = "1.5.0"
+fancy-regex = "0.14.0"
