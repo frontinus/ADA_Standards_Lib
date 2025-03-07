@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Francesco Abate "]
 license = "MIT"
 description = "A library to help you handle checks on your ADA projects, especially good to build scripts to check coding standards conformity."
-keywords = ["string", "manipulation", "utility", "ADA", "Code", "Coding", "Standard"]
+keywords = ["string", "parsing", "analysis", "ADA", "code"]
 categories = ["string-processing", "utilities", "Ast"]
 
 [dependencies]
