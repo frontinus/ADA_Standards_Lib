@@ -1,5 +1,4 @@
 use indextree::{Arena, NodeId};
-use std::collections::VecDeque;
 use regex::Regex;
 use fancy_regex::Regex as Reg;
 use lazy_static::lazy_static;
@@ -90,7 +89,7 @@ pub struct MembershipExpression {
 #[derive(Debug, Clone)]
 pub struct ConditionExpr {
     pub list: Vec<Expression>, // Changed to Expression enum
-    // albero: ...  // Skipping 'albero' for now, needs tree structure consideration
+    pub albero : Option<Box<Expression>>,
 }
 
 #[derive(Debug, Clone)]
@@ -274,7 +273,7 @@ impl NodeData {
 }
 
 
-struct AST {
+pub struct AST {
     arena: Arena<NodeData>,
     root_id: NodeId, // Hold the root NodeId
     nodes_data: Vec<NodeData>, // Temporary storage for node data before building tree
@@ -293,7 +292,7 @@ impl AST {
         }
     }
 
-    fn associate_end_lines(&mut self) -> Result<(), String> {
+    pub fn associate_end_lines(&mut self) -> Result<(), String> {
         let mut sorted_node_indices: Vec<usize> = (0..self.nodes_data.len()).collect();
         sorted_node_indices.sort_by_key(|&index| self.nodes_data[index].start_index);
 
@@ -341,7 +340,7 @@ impl AST {
     }
 
 
-    fn build(&mut self) -> Result<(), String> {
+    pub fn build(&mut self) -> Result<(), String> {
         self.associate_end_lines()?; // Associate end lines first
 
         self.arena = Arena::new(); // Re-create arena - root node will be re-added
@@ -375,11 +374,11 @@ impl AST {
     }
 
 
-    fn print_tree(&self) {
+    pub fn print_tree(&self) {
         println!("{}", self.output_tree());
     }
 
-    fn output_tree(&self) -> String {
+    pub fn output_tree(&self) -> String {
         let mut output = String::new();
         for node_id in self.root_id.descendants(&self.arena) {
             let indent_level = node_id.ancestors(&self.arena).count() - 1; // Root is at level 0
@@ -406,7 +405,7 @@ impl AST {
     }
 
 
-    fn print_nodes_info(&self) -> Result<(), String> {
+    pub fn print_nodes_info(&self) -> Result<(), String> {
         for index in 0..self.nodes_data.len() {
             if !self.node_ids[index].is_none() {
                 if let Some(node) = self.arena.get(self.node_ids[index].expect("KABOOM_4")) {
@@ -419,7 +418,7 @@ impl AST {
         Ok(())
     }
 
-    fn extract_packages(code_text: &str) -> Vec<NodeData> {
+    pub fn extract_packages(code_text: &str) -> Vec<NodeData> {
         let mut nodes_data: Vec<NodeData> = Vec::new();
         lazy_static! {
             static ref PACKAGE_PATTERN: Reg = Reg::new(
@@ -751,10 +750,11 @@ fn extract_case_statements(code_text: &str) -> Vec<NodeData> {
     new_nodes_data
 }
 
-fn parse_condition_expression(condition_str: &str) -> ConditionExpr {
+pub fn parse_condition_expression(condition_str: &str) -> ConditionExpr {
     let mut list = Vec::new();
-    let albero = AST::supersplitter(condition_str.to_string(), &mut list); // Pass mut list
-    ConditionExpr { list }
+    let root_expression = AST::supersplitter(condition_str.to_string(), &mut list); // Pass mut list
+
+    ConditionExpr { list,albero: Some(Box::new(root_expression)), }
 }
 
 // Utility function to check size, inlined for now
@@ -853,7 +853,7 @@ fn keyword_identifier(condstring: &str, index: usize) -> (&'static str, i32) {
 }
 
 
-fn recursive_function(keyword_str: &str, condstring: String, index: usize, lst: &mut Vec<Expression>) -> Expression {
+pub fn recursive_function(keyword_str: &str, condstring: String, index: usize, lst: &mut Vec<Expression>) -> Expression {
     let keyword = keyword_str.to_string(); // Convert to String once
     if let Some(un_keyword) = match keyword.as_str() {
         "not" => Some(Unaries::NOT),
@@ -921,7 +921,7 @@ fn recursive_function(keyword_str: &str, condstring: String, index: usize, lst: 
 }
 
 
-fn supersplitter(condstring_in: String, lst: &mut Vec<Expression>) -> Expression {
+pub fn supersplitter(condstring_in: String, lst: &mut Vec<Expression>) -> Expression {
     let mut number_of_open_parenthesis = 0;
     let mut number_of_closed_parenthesis = 0;
     let mut string_flag = 0;
@@ -966,7 +966,7 @@ fn supersplitter(condstring_in: String, lst: &mut Vec<Expression>) -> Expression
 
 
 // Flag setter function - inlined and corrected to return updated values
-fn flag_setter(condstring: &str, index: usize, char: char, string_flag: i32, number_of_open_parenthesis: i32, number_of_closed_parenthesis: i32) -> (i32, i32, i32) {
+pub fn flag_setter(condstring: &str, index: usize, char: char, string_flag: i32, number_of_open_parenthesis: i32, number_of_closed_parenthesis: i32) -> (i32, i32, i32) {
     let mut mut_string_flag = string_flag;
     let mut mut_number_of_open_parenthesis = number_of_open_parenthesis;
     let mut mut_number_of_closed_parenthesis = number_of_closed_parenthesis;
@@ -987,12 +987,12 @@ fn flag_setter(condstring: &str, index: usize, char: char, string_flag: i32, num
 }
 
 // Flags check function - inlined for now
-fn flags_check(number_of_open_parenthesis: i32, number_of_closed_parenthesis: i32, string_flag: i32) -> bool {
+pub fn flags_check(number_of_open_parenthesis: i32, number_of_closed_parenthesis: i32, string_flag: i32) -> bool {
     (number_of_open_parenthesis - number_of_closed_parenthesis == 0) && string_flag == 0
 }
 
 // Is parenthesis exterior function
-fn is_parenthesis_exterior(expression: &str) -> bool {
+pub fn is_parenthesis_exterior(expression: &str) -> bool {
     let mut cnt_paren = 0;
     let mut cnt_prn = 0;
     for (idx, char) in expression.chars().enumerate() {
@@ -1010,7 +1010,7 @@ fn is_parenthesis_exterior(expression: &str) -> bool {
 }
 
 // Is expression a parenthesis function
-fn is_expression_a_parenthesis(expression: &str) -> bool {
+pub fn is_expression_a_parenthesis(expression: &str) -> bool {
     if expression.len() < 2 {
         return false;
     }
@@ -1025,29 +1025,35 @@ fn is_expression_a_parenthesis(expression: &str) -> bool {
 }
 
 
-fn clean_code(raw_code: &str) -> String {
+pub fn clean_code(raw_code: &str) -> String {
     let space_to_tab_ratio = 4;
     let ada_code_content = raw_code.replace("\t", &" ".repeat(space_to_tab_ratio));
+    let mut cleaned_lines = Vec::new();
 
     lazy_static! {
-        static ref CLEAN_CODE_REGEX: Regex = Regex::new(r#""[^"]*"|--.*$"#).unwrap();
+        static ref COMMENT_REGEX: Regex = Regex::new(r"--.*").unwrap();
+        static ref STRING_REGEX: Regex = Regex::new(r#""[^"]*""#).unwrap();
     }
 
-    let cleaned_code = CLEAN_CODE_REGEX.replace_all(&ada_code_content, |caps: &regex::Captures| {
-        if caps.get(0).unwrap().as_str().starts_with('"') {
-            caps.get(0).unwrap().as_str().to_string()
-        } else {
+    for line in ada_code_content.lines() {
+        let mut cleaned_line = line.to_string();
+        // Process comments first to avoid interfering with string regex
+        cleaned_line = COMMENT_REGEX.replace(&cleaned_line, |caps: &regex::Captures| {
             " ".repeat(caps.get(0).unwrap().as_str().len())
-        }
-    });
+        }).into_owned(); // Convert Cow::Owned to String
 
-    cleaned_code.split("\n")
-        .collect::<Vec<&str>>()
-        .join("\n")
+        // Trim trailing whitespace AFTER comment replacement
+        cleaned_line = cleaned_line.trim_end().to_string();
+
+
+        // String literals are preserved - No replacement needed for strings in line-by-line approach for comments
+        cleaned_lines.push(cleaned_line);
+    }
+    cleaned_lines.join("\n")
 }
 
 
-fn extract_all_nodes(code_text: &str) -> Vec<NodeData> {
+pub fn extract_all_nodes(code_text: &str) -> Vec<NodeData> {
     let mut nodes: Vec<NodeData> = Vec::new();
     nodes.extend(AST::extract_packages(code_text));
     let mut temp_nodes_1: Vec<NodeData> = Vec::new();
@@ -1068,6 +1074,36 @@ fn extract_all_nodes(code_text: &str) -> Vec<NodeData> {
     nodes.extend(temp_nodes_5);
     nodes
 
+}
+
+pub fn leggitree(nodo: &Expression, level: u32, prefix: &str) {
+    match nodo {
+        Expression::Binary(binary_expr) => {
+            println!("{} {} {}", " ".repeat((level * 4) as usize), prefix, binary_expr.condstring);
+            AST::leggitree(&*binary_expr.left, level + 1, "L--- ");
+            AST::leggitree(&*binary_expr.right, level + 1, "R--- ");
+        }
+        Expression::Membership(membership_expr) => {
+            println!("{} {} {}", " ".repeat((level * 4) as usize), prefix, membership_expr.condstring);
+            AST::leggitree(&*membership_expr.left, level + 1, "L--- ");
+            AST::leggitree(&*membership_expr.right, level + 1, "R--- ");
+        }
+        Expression::Unary(unary_expr) => {
+            println!("{} {} {}", " ".repeat((level * 4) as usize), prefix, unary_expr.condstring);
+            AST::leggitree(&*unary_expr.operand, level + 1, "U--- ");
+        }
+        Expression::Literal(literal_expr) => {
+            println!("{} {} Literal: {}", " ".repeat((level * 4) as usize), prefix, literal_expr);
+        }
+        Expression::Condition(condition_expr) => {
+            println!("{} {} Condition Expression (albero):", " ".repeat((level * 4) as usize), prefix);
+            if let Some(albero) = &condition_expr.albero {
+                AST::leggitree(&*albero, level + 1, "A--- "); // Prefix for albero in ConditionExpr
+            } else {
+                println!("{}     No albero in ConditionExpr", " ".repeat(((level + 1) * 4) as usize));
+            }
+        }
+    }
 }
 
 
