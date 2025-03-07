@@ -6,7 +6,7 @@ authors = ["Francesco Abate "]
 license = "MIT"
 description = "A library to help you handle checks on your ADA projects, especially good to build scripts to check coding standards conformity."
 keywords = ["string", "parsing", "analysis", "ADA", "code"]
-categories = ["string-processing", "utilities", "Ast"]
+categories = ["text-processing", "development-tools", "data-structures"]
 
 [dependencies]
 indextree = "4.7.3"
