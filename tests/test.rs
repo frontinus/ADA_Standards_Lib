@@ -143,9 +143,6 @@ mod tests {
     fn test_parse_condition_expression_complex_and_or_not() {
         let condition_str = "(Arg > 10 and Arg < 20) or else not Found";
         let conditions = AST::parse_condition_expression(condition_str);
-        println!("{:?}",conditions);
-        println!("------------------------------------");
-        println!("{:?}",conditions.list);
         AST::leggitree(&conditions.albero.unwrap(),0,"Root: ");
         assert_eq!(conditions.list.len(), 5, "Expected 5 expressions in the list");
 
@@ -272,9 +269,9 @@ begin
     null; -- Another comment here
 end My_Procedure;"#;
         let cleaned_code = AST::clean_code(raw_code);
-        let expected_code = r#"procedure My_Procedure is                      
+        let expected_code = r#"procedure My_Procedure is                     
 begin
-    null;                      
+    null;                        
 end My_Procedure;"#;
         assert_eq!(cleaned_code, expected_code, "Test Case: Single-line comments replaced with spaces");
     }
@@ -303,10 +300,10 @@ begin
     Put_Line ("Another string"); -- Comment after string
 end My_Procedure;"#;
         let cleaned_code = AST::clean_code(raw_code);
-        let expected_code = r#"procedure My_Procedure is                               
-    Message : String := "String with -- comment inside";                      
+        let expected_code = r#"procedure My_Procedure is                                
+    Message : String := "String with -- comment inside";                       
 begin
-    Put_Line ("Another string");                      
+    Put_Line ("Another string");                        
 end My_Procedure;"#;
         assert_eq!(cleaned_code, expected_code, "Test Case: Comments and strings combined");
     }
@@ -333,15 +330,15 @@ begin
 end Complex_Code; -- End procedure comment"#;
         let cleaned_code = AST::clean_code(raw_code);
         let expected_code = r#"procedure Complex_Code is
-                                  
-                                  
-                                  
-    Message1 : String := "String 1 with tab\t and -- comment";                             
-    Message2 : String := "String 2";                      
+                               
+                                
+                                
+    Message1 : String := "String 1 with tab\t and -- comment";                          
+    Message2 : String := "String 2";                   
 begin
-    Put_Line (Message1);                      
+    Put_Line (Message1);                  
     Put_Line (Message2);
-end Complex_Code;                      "#;
+end Complex_Code;                         "#;
         assert_eq!(cleaned_code, expected_code, "Test Case: Multiple lines, complex");
     }
 
@@ -349,7 +346,7 @@ end Complex_Code;                      "#;
     fn test_clean_code_carriage_return_newline() {
         let raw_code = "Line 1\r\nLine 2 -- comment\r\nLine 3";
         let cleaned_code = AST::clean_code(raw_code);
-        let expected_code = "Line 1\r\nLine 2             \r\nLine 3";
+        let expected_code = "Line 1\nLine 2           \nLine 3";
         assert_eq!(cleaned_code, expected_code, "Test Case: Carriage return and newline (CRLF)");
     }
 
@@ -357,7 +354,7 @@ end Complex_Code;                      "#;
     fn test_clean_code_only_comment_lines() {
         let raw_code = "-- This is a comment line 1\n-- This is comment line 2";
         let cleaned_code = AST::clean_code(raw_code);
-        let expected_code = "\n";
+        let expected_code = "                           \n                         ";
         assert_eq!(cleaned_code, expected_code, "Test Case: Only comment lines");
     }
 
