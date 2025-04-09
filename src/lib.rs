@@ -1,4 +1,50 @@
-
+//! # ADA_Standards
+//!
+//! [![crates.io](https://img.shields.io/crates/v/ADA_Standards.svg)](https://crates.io/crates/ADA_Standards)
+//! [![docs.rs](https://docs.rs/ADA_Standards/badge.svg)](https://docs.rs/ADA_Standards)
+//!
+//! A library for parsing and analyzing Ada source code to enforce coding standards and identify potential issues.
+//!
+//! This library provides a way to programmatically inspect the structure and content of Ada files,
+//! allowing for the creation of custom rules to verify specific coding conventions.
+//!
+//! ## Overview
+//!
+//! The `ADA_Standards` library uses regular expressions to perform a lightweight parsing of Ada code
+//! and builds an Abstract Syntax Tree (AST) represented by the `indextree` crate. This AST can then
+//! be traversed to analyze the code based on user-defined rules.
+//!
+//! ## Modules
+//!
+//! * `text_format`: Provides constants for ANSI escape codes to format output in the console.
+//!
+//! ## Enums
+//!
+//! The library defines several enums to represent different elements of Ada expressions:
+//!
+//! * `Unaries`: Represents unary operators like `not`.
+//! * `Memberships`: Represents membership operators like `in` and `not in`.
+//! * `Binaries`: Represents binary operators like `and`, `or`, `and then`, `or else`, etc.
+//!
+//! ## Structs
+//!
+//! Key data structures used by the library:
+//!
+//! * `NodeData`: Stores information about a node in the AST, including its name, type, line numbers, and specific data related to the Ada construct it represents (e.g., conditions for an `if` statement, arguments for a procedure).
+//! * `UnaryExpression`, `BinaryExpression`, `MembershipExpression`, `ConditionExpr`: Represent different types of expressions in Ada code.
+//! * `ArgumentData`: Stores information about procedure or function arguments.
+//! * `ReturnKeywordData`: Stores information about the return type of a function.
+//! * `AST`: Represents the Abstract Syntax Tree of the Ada code. It provides methods to build the tree from a list of `NodeData` and traverse it.
+//!
+//! ## Usage
+//!
+//! To use the `ADA_Standards` library, you would typically:
+//!
+//! 1.  Read the content of an Ada file as a string.
+//! 2.  Use the library's functions (like `extract_packages`, `extract_procedures_functions`, etc.) to parse the code and create a `Vec<NodeData>`.
+//! 3.  Create an `AST` instance from the `Vec<NodeData>`.
+//! 4.  Define your own analysis rules as functions that take an `&AST`
+//! 7.  Process the list of nodes and various informations in the AST to try to check if your coding standards are respected
 
 use indextree::{Arena, NodeId};
 use regex::Regex;

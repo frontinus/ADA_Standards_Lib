@@ -24,7 +24,7 @@ Add the following dependency to your Cargo manifest...
 
 ```toml
 [dependencies]
-ada-analyzer = "0.1.0" 
+ada-analyzer = "0.2.0" 
 ```
 
 ...and see the [docs](https://docs.rs/ADA_Standards) for how to use it.
@@ -32,6 +32,23 @@ ada-analyzer = "0.1.0"
 # Example
 
 ```rust
+use ADA_Standards::{AST, NodeData, Expression, ConditionExpr, UnaryExpression, BinaryExpression, MembershipExpression, Unaries, Binaries, Memberships};
+use std::env;
+
+
+let args: Vec<String> = env::args().collect();
+
+
+let file_path = &args[1];
+let code_text = fs::read_to_string(file_path)?;
+let cleaned_code = AST::clean_code(code_text);
+let mut node_data_vec: Vec<NodeData> = Vec::new();
+node_data_vec =extract_statement_nodes(cleaned_code,node_data_vec);
+ast = AST::new(node_data_vec);
+ast.build();
+ast.print_tree();
+
+let conditions = AST::parse_condition_expression(cleaned_code);
 
 ```
 
@@ -56,3 +73,5 @@ You are free to contribute by forking and creating a pull request !
 My name is Francesco Abate, I'm a computer engineer with experience in the fields of  software and embedded programming, cybersecurity and AI, I am currently working on my mastery of the Rust language and seeking a job in that field!
 
 Feel free to visit my website: [Francesco Abate](https://frontinus.github.io/)
+
+You can also contact me @ francesco1.abate@yahoo.com or on linkedin 
