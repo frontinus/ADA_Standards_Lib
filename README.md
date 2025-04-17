@@ -24,7 +24,7 @@ Add the following dependency to your Cargo manifest...
 
 ```toml
 [dependencies]
-ada-analyzer = "0.2.0" 
+ADA_Standards = "0.3.0" 
 ```
 
 ...and see the [docs](https://docs.rs/ADA_Standards) for how to use it.
