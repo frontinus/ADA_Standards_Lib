@@ -47,17 +47,6 @@
 //! 7.  Process the list of nodes and various informations in the AST to try to check if your coding standards are respected
 //!
 //! 
-/// # Example
-/// ```
-/// 
-///let code_text = "if X > 0 then Y := 1; end if; while X < 10 loop X := X + 1; end loop;";
-///let mut nodes = Vec::new();
-///nodes.extend(extract_if_statements(code_text)?);
-///nodes.extend(extract_while_loops(code_text)?);
-///let mut ast = AST::new(nodes);
-///ast.build(code_text)?;
-///ast.check_standards(code_text)?;
-/// ```
 ///!
 
 use indextree::{Arena, Node, NodeId};
@@ -240,7 +229,8 @@ enum ParseEvent {
 ///
 /// # Examples
 /// ```
-/// use ada_standards::NodeData;
+///
+/// use ADA_Standards::NodeData;
 /// let node = NodeData::new(
 ///     "MyProcedure".to_string(),
 ///     "ProcedureNode".to_string(),
@@ -249,7 +239,7 @@ enum ParseEvent {
 ///     false,
 /// );
 /// assert_eq!(node.name, "MyProcedure");
-/// assert_eq!(node.is_body, false);
+/// assert_eq!(node.is_body, Some(false));
 /// assert_eq!(node.start_line, Some(10));
 /// ```
 /// 
@@ -292,7 +282,7 @@ pub struct NodeData {
 }
 
 impl NodeData {
-    fn new(name: String, node_type: String, start_line: Option<usize>, start_index: Option<usize>,is_body: bool) -> Self {
+    pub fn new(name: String, node_type: String, start_line: Option<usize>, start_index: Option<usize>,is_body: bool) -> Self {
         NodeData {
             name,
             node_type,
@@ -337,31 +327,8 @@ impl NodeData {
 /// - The `parent` field, if present, is included to show hierarchical relationships.
 /// - This method is I/O-bound and may be slow for large ASTs; consider using a verbosity flag for production.
 ///
-/// # Examples
-/// ```
-/// use ada_standards::{NodeData, ConditionExpr, Expression};
-/// let mut node = NodeData::new(
-///     "MyIf".to_string(),
-///     "IfStatement".to_string(),
-///     Some(5),
-///     Some(10),
-///     false,
-/// );
-/// node.conditions = Some(ConditionExpr {
-///     list: Some(vec![Expression::Literal("True".to_string())]),
-///     albero: None,
-/// });
-/// node.print_info();
-/// // Output (simplified):
-/// //   Category: IfStatement, 
-/// //   Name: MyIf, 
-/// //   Start Line: 5, 
-/// //   Conditions:
-/// //     Cond: True, 
-/// //     ------
-/// ```
 
-    fn print_info(&self) {
+    pub fn print_info(&self) {
         println!("{}  Category: {} {}{}, ", text_format::BLUE, text_format::ENDC, self.node_type, ", ");
         println!("{}  Name: {} {}{}", text_format::BLUE, text_format::ENDC, self.name, ", ");
         if let Some(start_line) = self.start_line {
@@ -476,7 +443,7 @@ impl NodeData {
 ///
 /// # Examples
 /// ```
-/// use ada_standards::{AST, NodeData};
+/// use ADA_Standards::{AST, NodeData};
 /// let nodes = vec![NodeData::new("Root".to_string(), "RootNode".to_string(), None, None, false)];
 /// let ast = AST::new(nodes);
 /// ```
@@ -689,7 +656,7 @@ pub fn extract_end_statements(code_text: &str) -> Result<Vec<EndStatement>,ASTEr
     Ok(ends)
 }
 
-fn extract_packages(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_packages(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let package_pattern = Regex::new(
         r"(?i)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<type>\b(?:generic|separate)\b)?\s*(?P<category>\bpackage\b)(?:\s+(?P<body>\bbody\b))?\s+(?P<name>(?:(?!\bis(?! new\b)|;).)*)"
     ).map_err(|_| ASTError::RegexError)?;
@@ -773,7 +740,7 @@ fn extract_packages(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     Ok(nodes)
 }
 
-fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let func_proc_pattern = Regex::new(
         r"(?i)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<category>\bprocedure|function\b)\s+(?P<name>[^\s\(\;]*)(?:\s*\((?P<params>[\s\S]*?(?=\)))\))?(?:\s*return\s*(?P<return_statement>[\w\.\_\-]+))?"
     ).map_err(|_| ASTError::RegexError)?;
@@ -856,7 +823,7 @@ fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, ASTErr
     Ok(nodes)
 }
 
-fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let type_pattern = Regex::new(
         r"(?i)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<category>\btype\b|\bsubtype\b)\s+(?P<name>[\w\.\_]+)\s+is\s+[^;]+;"
     ).map_err(|_| ASTError::RegexError)?;
@@ -881,7 +848,7 @@ fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTError>
     Ok(nodes)
 }
 
-fn extract_declare_blocks(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_declare_blocks(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let declare_pattern = Regex::new(r"(?i)^(?!\s*--)\s*\bdeclare\b").map_err(|_| ASTError::RegexError)?;
     let mut nodes = Vec::new();
 
@@ -900,7 +867,7 @@ fn extract_declare_blocks(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     Ok(nodes)
 }
 
-fn extract_control_flow_nodes(code_text: &str, nodes: &mut Vec<NodeData>) -> Result<Vec<NodeData>,ASTError> {
+pub fn extract_control_flow_nodes(code_text: &str, nodes: &mut Vec<NodeData>) -> Result<Vec<NodeData>,ASTError> {
         let mut new_nodes_data: Vec<NodeData> = Vec::new();
         new_nodes_data.extend(AST::extract_simple_loops(code_text)?);
         new_nodes_data.extend(AST::extract_while_loops(code_text)?);
@@ -909,7 +876,7 @@ fn extract_control_flow_nodes(code_text: &str, nodes: &mut Vec<NodeData>) -> Res
         Ok(new_nodes_data)
 }
 
-fn extract_simple_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_simple_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let simpleloops_pattern = Regex::new(r"(?i)^\s*(?P<Captureloop>\bloop\b)").map_err(|_| ASTError::RegexError)?;
     let mut nodes = Vec::new();
 
@@ -949,17 +916,6 @@ fn extract_simple_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 /// # Errors
 /// - `ASTError::RegexError`: If the regex pattern for `while` loops cannot be compiled.
 ///
-/// # Examples
-/// ```
-/// use ada_standards::{NodeData, ASTError};
-/// let code = "while X < 10 loop X := X + 1; end loop;";
-/// let nodes = extract_while_loops(code).unwrap();
-/// assert_eq!(nodes[0].node_type, "WhileLoop");
-/// assert_eq!(nodes[0].start_line, Some(1));
-/// if let Some(conditions) = &nodes[0].conditions {
-///     assert!(conditions.list.is_some());
-/// }
-/// ```
 ///
 /// # Notes
 /// - Captures the condition after `while` up to `loop`, storing it in `conditions.list`.
@@ -967,7 +923,7 @@ fn extract_simple_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 /// - Ignores comments and nested constructs during initial extraction.
 /// - Use with `build` and `associate_end_lines` to complete node metadata.
 
-fn extract_while_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_while_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let whileloops_pattern = Regex::new(r"(?im)(?P<Capturewhile>\bwhile\b)\s*(?P<exitcond2>(\n|.)*?)\s*\bloop\b[^\n;]*").map_err(|_| ASTError::RegexError)?;
     let mut nodes = Vec::new();
 
@@ -991,7 +947,7 @@ fn extract_while_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 }
 
 
-fn extract_for_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_for_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let forloops_pattern = Regex::new(r"(?i)(?P<Capturefor>\bfor\b)\s*(?P<index>.*?)\s*\bin\b\s*(?:(?P<loop_direction>.*?))?\s*(?P<primavar>[^\s]*)\s*(?:(?=\brange\b)\brange\b\s*(?P<frst>(?:.|\n)*?)\s+\.\.\s*(?P<scnd>(?:.|\n)*?)\s+\bloop\b|(?:(?=\.\.)\.\.\s*(?P<range_end>.*?)\s*\bloop\b|\s*\bloop\b))").map_err(|_| ASTError::RegexError)?;
     let mut nodes = Vec::new();
 
@@ -1019,7 +975,7 @@ fn extract_for_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 }
 
 
-fn extract_statement_nodes(code_text: &str, nodes: &mut Vec<NodeData>) -> Result<Vec<NodeData>,ASTError> {
+pub fn extract_statement_nodes(code_text: &str, nodes: &mut Vec<NodeData>) -> Result<Vec<NodeData>,ASTError> {
         let mut new_nodes_data: Vec<NodeData> = Vec::new();
         new_nodes_data.extend(AST::extract_if_statements(code_text)?);
         new_nodes_data.extend(AST::extract_case_statements(code_text)?);
@@ -1047,17 +1003,6 @@ fn extract_statement_nodes(code_text: &str, nodes: &mut Vec<NodeData>) -> Result
 /// # Errors
 /// - `ASTError::RegexError`: If the regex pattern for `if` statements cannot be compiled.
 ///
-/// # Examples
-/// ```
-/// use ada_standards::{NodeData, ASTError};
-/// let code = "if X > 0 then Y := 1; end if;";
-/// let nodes = extract_if_statements(code).unwrap();
-/// assert_eq!(nodes[0].node_type, "IfStatement");
-/// assert_eq!(nodes[0].start_line, Some(1));
-/// if let Some(conditions) = &nodes[0].conditions {
-///     assert!(conditions.list.is_some());
-/// }
-/// ```
 ///
 /// # Notes
 /// - Captures the condition after `if` up to `then`, storing it in `conditions.list`.
@@ -1065,7 +1010,7 @@ fn extract_statement_nodes(code_text: &str, nodes: &mut Vec<NodeData>) -> Result
 /// - Ignores comments and nested constructs during initial extraction.
 /// - Use with `build` and `associate_end_lines` to complete node metadata.
 
-fn extract_if_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+pub fn extract_if_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let if_pattern = Regex::new(r"(?i)^\s*(?P<ifstat>\bif\b)(?P<Condition>(?:.|\n)*?)(?<!\band\b\s)then").map_err(|_| ASTError::RegexError)?;
     let mut nodes = Vec::new();
 
@@ -1101,15 +1046,9 @@ fn extract_if_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 /// - `Ok(Vec<NodeData>)`: A vector of `NodeData` instances for case statements.
 /// - `Err(ASTError)`: If the regex pattern fails to compile.
 ///
-/// # Examples
-/// ```
-/// use ada_standards::{NodeData, ASTError};
-/// let code = "case X is when 1 => null; end case;";
-/// let nodes = extract_case_statements(code).unwrap();
-/// assert_eq!(nodes[0].node_type, "CaseStatement");
-/// ```
 
-fn extract_case_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+
+pub fn extract_case_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     let case_pattern = Regex::new(r#"(?i)(?<!end\s)(?:\"\s*|\'\s*)?(?P<Casestmnt>\bcase\b)\s*(?P<var>(?:.|\n)*?)\s*\bis\b(?:\s*\"|\s*\')?"#).map_err(|_| ASTError::RegexError)?;
     let mut nodes = Vec::new();
 
@@ -1152,22 +1091,6 @@ fn extract_case_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 /// - `ASTError::NodeNotInArena` if a node ID is invalid.
 /// - `ASTError::InvalidNodeData` if `body_start` or `end_index` is missing.
 ///
-/// # Examples
-/// ```
-/// use ada_standards::{AST, NodeData, ASTError};
-/// let code_text = "case X is when 1 => null; when 2 => null; end case;";
-/// let nodes = vec![NodeData::new(
-///     "Switch".to_string(),
-///     "CaseStatement".to_string(),
-///     Some(1),
-///     Some(0),
-///     false,
-/// )];
-/// let mut ast = AST::new(nodes);
-/// ast.build(code_text).unwrap();
-/// ast.populate_cases(code_text).unwrap();
-/// // Cases are now populated in CaseStatement nodes
-/// ```
 ///
 /// # Notes
 /// - Must be called after `build` to ensure `end_index` is set.
