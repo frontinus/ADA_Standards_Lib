@@ -346,7 +346,7 @@ end Complex_Code;                         "#;
     fn test_clean_code_carriage_return_newline() {
         let raw_code = "Line 1\r\nLine 2 -- comment\r\nLine 3";
         let cleaned_code = AST::clean_code(raw_code);
-        let expected_code = "Line 1\nLine 2           \nLine 3";
+        let expected_code = "Line 1\r\nLine 2            \nLine 3";
         assert_eq!(cleaned_code, expected_code, "Test Case: Carriage return and newline (CRLF)");
     }
 

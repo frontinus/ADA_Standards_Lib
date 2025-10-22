@@ -7,6 +7,8 @@ license = "MIT"
 description = "A library to help you handle checks on your ADA projects, especially good to build scripts to check coding standards conformity."
 keywords = ["string", "parsing", "analysis", "ADA", "code"]
 categories = ["text-processing", "development-tools", "data-structures"]
+documentation = "https://docs.rs/ADA_Standards"
+repository = "https://github.com/frontinus/ADA_Standards_Lib"
 
 [dependencies]
 indextree = "4.7.3"

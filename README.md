@@ -1,4 +1,4 @@
-ADA_ANALYZER.rs
+ADA_Standards.rs
 ==============
 
 A library for analyzing Ada code to check if coding standards are respected in Rust.
