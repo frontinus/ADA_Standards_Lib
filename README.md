@@ -1,14 +1,14 @@
-ADA_Standards.rs
+ADA_Standards
 ==============
 
 A library for analyzing Ada code to check if coding standards are respected in Rust.
 
-Using this library, you can parse Ada code and programmatically verify its adherence to defined coding standards. This helps in ensuring code quality, consistency, and compliance within Ada projects.
+ADA_Standards is a Rust library designed for lightweight parsing and analysis of Ada source code. It uses regular expressions to extract structural information (packages, procedures, loops, etc.) and builds an Abstract Syntax Tree (AST) using indextree. This allows developers to programmatically inspect Ada code, enforce coding standards, and identify potential issues.
 
 [![Rust](https://github.com/frontinus/ADA_Standards_Lib/actions/workflows/rust.yml/badge.svg)](https://github.com/frontinus/ADA_Standards_Lib/actions/workflows/rust.yml)
 [![Latest version](https://img.shields.io/crates/v/ADA_Standards.svg)](https://crates.io/crates/ADA_Standards)
 [![Documentation](https://docs.rs/ADA_Standards/badge.svg)](https://docs.rs/ADA_Standards)
-[![License](https://img.shields.io/crates/l/ADA_Standards.svg)](https://github.com/your-github-username/ada-analyzer#license)
+[![License](https://img.shields.io/crates/l/ADA_Standards.svg)](https://github.com/frontinus/ada-analyzer#license)
 
 
 
@@ -24,7 +24,8 @@ Add the following dependency to your Cargo manifest...
 
 ```toml
 [dependencies]
-ADA_Standards = "0.3.0" 
+ADA_Standards = "1.0.1" 
+
 ```
 
 ...and see the [docs](https://docs.rs/ADA_Standards) for how to use it.
@@ -32,7 +33,9 @@ ADA_Standards = "0.3.0"
 # Example
 
 ```rust
-use ADA_Standards::{AST, NodeData, Expression, ConditionExpr, UnaryExpression, BinaryExpression, MembershipExpression, Unaries, Binaries, Memberships};
+use ADA_Standards::{AST, NodeData, Expression, ConditionExpr, UnaryExpression, BinaryExpression, MembershipExpression, Unaries, Binaries, Memberships, ASTError};
+use std::fs;
+use std::path::Path;
 use std::env;
 
 

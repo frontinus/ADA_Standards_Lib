@@ -759,12 +759,14 @@ pub fn extract_packages(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     });
 
     for mat in sorted_matches {
-        let start_line = code_text[..mat.get(0).unwrap().start()].lines().count() + 1;
-        let start_index = mat.get(0).unwrap().start();
+        let full_match = mat.get(0).ok_or(ASTError::MatchItemMissing)?;
+        let category_keyword = mat.name("category").ok_or(ASTError::InvalidCapture)?;
+        let start_line = code_text[..category_keyword.start()].matches('\n').count() + 1;
+        let start_index = category_keyword.start();
         let name = mat.name("name").unwrap().as_str().to_string();
         let is_body = mat.name("body").is_some();
 
-        let search_text = &code_text[mat.get(0).unwrap().end()..];
+        let search_text = &code_text[full_match.end()..];
         let end_search = Regex::new(r"\s*(is|;)")
             .unwrap()
             .find(search_text);
@@ -773,7 +775,7 @@ pub fn extract_packages(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
         if let Some(end_match) = end_search {
             if end_match.as_str().trim() == ";" {
                 node.end_line = Some(start_line);
-                node.end_index = Some(mat.get(0).unwrap().end() + end_match.end());
+                node.end_index = Some(full_match.end() + end_match.end());
             }
         }
 
@@ -1066,7 +1068,8 @@ pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTEr
 /// ```
 /// use ADA_Standards::{NodeData, ASTError, AST};
 /// # fn main() -> Result<(), ASTError> {
-/// let code = r#"procedure Main is
+/// let code = r#"
+/// procedure Main is
 ///     My_Str : String := "this should not be a match: declare";
 ///   begin
 ///     declare -- This is the one it should find
@@ -1101,7 +1104,7 @@ pub fn extract_declare_blocks(code_text: &str) -> Result<Vec<NodeData>, ASTError
         // Get the match for the *named group* "declare"
         let mat = caps.name("declare").ok_or(ASTError::InvalidCapture)?;
 
-        let start_line = code_text[..mat.start()].lines().count() + 1;
+        let start_line = code_text[..mat.start()].matches('\n').count() + 1;
         let start_index = mat.start(); // The index of the word "declare"
         let node = NodeData::new(
             "DeclareBlock".to_string(),
@@ -2020,9 +2023,9 @@ pub fn flag_setter( char: char, string_flag: i32, number_of_open_parenthesis: i3
     let mut mut_number_of_open_parenthesis = number_of_open_parenthesis;
     let mut mut_number_of_closed_parenthesis = number_of_closed_parenthesis;
 
-    if (char == '"' || char == '\'') && string_flag == 0 {
+    if char == '"' && string_flag == 0 {
         mut_string_flag = 1;
-    } else if (char == '"' || char == '\'') && string_flag == 1 {
+    } else if char == '"'  && string_flag == 1 {
         mut_string_flag = 0;
     }
 
@@ -2157,6 +2160,15 @@ pub fn leggitree(nodo: &Expression, level: u32, prefix: &str) {
             }
         }
     }
+}
+
+// Add this helper function inside `impl AST { ... }` in lib.rs
+/// Finds the first node in the arena that matches a given name and type.
+pub fn find_node_by_name_and_type(&self, name: &str, node_type: &str) -> Option<NodeId> {
+    self.root_id.descendants(&self.arena).find(|&node_id| {
+        let node = self.arena.get(node_id).unwrap().get();
+        node.name == name && node.node_type == node_type
+    })
 }
 
 

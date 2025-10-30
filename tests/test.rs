@@ -358,4 +358,166 @@ end Complex_Code;                         "#;
         assert_eq!(cleaned_code, expected_code, "Test Case: Only comment lines");
     }
 
+    /// Tests the full end-to-end process:
+    /// 1. `clean_code`
+    /// 2. `extract_all_nodes`
+    /// 3. `build` (which runs `associate_end_lines_in_arena`)
+    /// 4. `populate_...` functions
+    /// It then verifies the final tree structure and node metadata.
+    #[test]
+    fn test_full_ast_build_and_nesting() {
+        let raw_code = r#"
+    package My_Pkg is
+    procedure Do_Nothing; -- spec
+    end My_Pkg;
+
+    package body My_Pkg is
+    procedure Do_Nothing is
+    begin -- procedure body
+        loop
+        exit when True;
+        end loop;
+    end Do_Nothing;
+    end My_Pkg;
+    "#;
+        let cleaned_code = AST::clean_code(raw_code);
+        let nodes = AST::extract_all_nodes(&cleaned_code).unwrap();
+        
+        let mut ast = AST::new(nodes);
+        ast.build(&cleaned_code).unwrap();
+        ast.populate_simple_loop_conditions(&cleaned_code).unwrap();
+        ast.populate_cases(&cleaned_code).unwrap();
+
+        // 1. Find the Package Spec
+        let pkg_spec_id = ast.find_node_by_name_and_type("My_Pkg", "PackageNode")
+            .expect("Could not find PackageNode 'My_Pkg'");
+        let pkg_spec_node = ast.arena.get(pkg_spec_id).unwrap().get();
+        
+        assert_eq!(pkg_spec_node.is_body, Some(false));
+        assert_eq!(pkg_spec_node.start_line, Some(2));
+        assert_eq!(pkg_spec_node.end_line, Some(4)); // Check end line association
+
+        // 2. Find the Package Body
+        // We need to find the *second* "My_Pkg" PackageNode.
+        let pkg_body_id = ast.root_id.descendants(&ast.arena).filter(|&id| {
+            let node = ast.arena.get(id).unwrap().get();
+            node.name == "My_Pkg" && node.node_type == "PackageNode"
+        }).nth(1).expect("Could not find PackageNode 'My_Pkg' (body)");
+        
+        let pkg_body_node = ast.arena.get(pkg_body_id).unwrap().get();
+        assert_eq!(pkg_body_node.is_body, Some(true));
+        assert_eq!(pkg_body_node.start_line, Some(6));
+        assert_eq!(pkg_body_node.end_line, Some(13));
+
+        // 3. Find the Procedure Spec (child of Package Spec)
+        let proc_spec_id = ast.find_node_by_name_and_type("Do_Nothing", "ProcedureNode")
+            .expect("Could not find ProcedureNode 'Do_Nothing' (spec)");
+        let proc_spec_node = ast.arena.get(proc_spec_id).unwrap().get();
+        
+        assert_eq!(proc_spec_node.is_body, Some(false));
+        assert_eq!(proc_spec_id.ancestors(&ast.arena).any(|id| id == pkg_spec_id), true, "Proc spec should be child of Pkg spec");
+
+        // 4. Find the Simple Loop (grandchild of Package Body)
+        let loop_id = ast.find_node_by_name_and_type("SimpleLoop", "SimpleLoop")
+            .expect("Could not find SimpleLoop");
+        let loop_node = ast.arena.get(loop_id).unwrap().get();
+
+        assert_eq!(loop_id.ancestors(&ast.arena).any(|id| id == pkg_body_id), true, "Loop should be child of Pkg body");
+        
+        // 5. Check populated loop conditions
+        let conds = loop_node.conditions.as_ref().expect("Loop conditions not populated");
+        assert!(matches!(conds.albero.as_deref(), Some(Expression::Literal(_))));
+        if let Some(Expression::Literal(lit)) = conds.albero.as_ref().map(|b| b.as_ref()) {
+            assert_eq!(lit.trim(), "True");
+        }
+    }
+
+    #[test]
+    fn test_extractors_ignore_strings_and_comments() {
+        let raw_code = r#"
+    procedure Test_Strings is
+    S1 : String := "this is a declare block";
+    S2 : String := "this is a case My_Var is";
+    S3 : String := "this is an if X then";
+    S4 : String := "this is a loop";
+    begin
+    -- This is the only real one
+    declare
+        X : Integer;
+    begin
+        null;
+    end;
+    end Test_Strings;
+    "#;
+        let cleaned_code = AST::clean_code(raw_code);
+        let nodes = AST::extract_all_nodes(&cleaned_code).unwrap();
+
+        // We expect 2 nodes: the procedure "Test_Strings" and the "DeclareNode"
+        assert_eq!(nodes.len(), 2, "Should only find 2 nodes (procedure and declare)");
+
+        // Check that our string-skipping logic worked
+        let case_nodes = nodes.iter().filter(|n| n.node_type == "CaseStatement").count();
+        let if_nodes = nodes.iter().filter(|n| n.node_type == "IfStatement").count();
+        let loop_nodes = nodes.iter().filter(|n| n.node_type == "SimpleLoop").count();
+        let declare_nodes = nodes.iter().filter(|n| n.node_type == "DeclareNode").count();
+
+        assert_eq!(case_nodes, 0, "Should not find 'case' in string");
+        assert_eq!(if_nodes, 0, "Should not find 'if' in string");
+        assert_eq!(loop_nodes, 0, "Should not find 'loop' in string");
+        assert_eq!(declare_nodes, 1, "Should find the one real 'declare' block");
+        
+        let declare_node = nodes.iter().find(|n| n.node_type == "DeclareNode").unwrap();
+        assert_eq!(declare_node.start_line, Some(9)); // Check line number
+    }
+
+    #[test]
+    fn test_parse_condition_ada_attributes() {
+        let condition_str = "My_Array'Length > 0";
+        let conditions = AST::parse_condition_expression(condition_str);
+        
+        // Check the root node
+        let root = conditions.albero.as_ref().expect("AST 'albero' is None");
+        if let Expression::Binary(bin_expr) = root.as_ref() {
+            assert_eq!(bin_expr.op, Binaries::SUPERIOR);
+            
+            // Check left operand
+            if let Expression::Literal(left) = &*bin_expr.left {
+                assert_eq!(left, "My_Array'Length");
+            } else {
+                panic!("Left operand was not a Literal");
+            }
+            
+            // Check right operand
+            if let Expression::Literal(right) = &*bin_expr.right {
+                assert_eq!(right, "0");
+            } else {
+                panic!("Right operand was not a Literal");
+            }
+        } else {
+            panic!("Root expression is not a BinaryExpression");
+        }
+    }
+
+    #[test]
+    fn test_parse_condition_function_call() {
+        // Your parser treats function calls as literals, which is fine.
+        // This test just confirms that behavior.
+        let condition_str = "My_Func(A, B) = True";
+        let conditions = AST::parse_condition_expression(condition_str);
+
+        let root = conditions.albero.as_ref().expect("AST 'albero' is None");
+        if let Expression::Binary(bin_expr) = root.as_ref() {
+            assert_eq!(bin_expr.op, Binaries::EQUAL);
+            if let Expression::Literal(left) = &*bin_expr.left {
+                assert_eq!(left, "My_Func(A, B)");
+            } else {
+                panic!("Left operand (function call) was not a Literal");
+            }
+        } else {
+            panic!("Root expression is not a BinaryExpression");
+        }
+    }
+
+
+
 }
