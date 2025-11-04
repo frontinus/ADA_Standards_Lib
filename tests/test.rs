@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use ADA_Standards::{AST, NodeData, Expression, ConditionExpr, UnaryExpression, BinaryExpression, MembershipExpression, Unaries, Binaries, Memberships};
+    use ADA_Standards::{AST, Expression, Unaries, Binaries, Memberships};
 
     #[test]
     fn test_parse_condition_expression_literal() {
@@ -433,8 +433,9 @@ end Complex_Code;                         "#;
     }
 
     #[test]
+
     fn test_extractors_ignore_strings_and_comments() {
-        let raw_code = r#"
+    let raw_code = r#"
     procedure Test_Strings is
     S1 : String := "this is a declare block";
     S2 : String := "this is a case My_Var is";
@@ -449,25 +450,34 @@ end Complex_Code;                         "#;
     end;
     end Test_Strings;
     "#;
-        let cleaned_code = AST::clean_code(raw_code);
-        let nodes = AST::extract_all_nodes(&cleaned_code).unwrap();
+    let cleaned_code = AST::clean_code(raw_code);
+    let nodes = AST::extract_all_nodes(&cleaned_code).unwrap();
 
-        // We expect 2 nodes: the procedure "Test_Strings" and the "DeclareNode"
-        assert_eq!(nodes.len(), 2, "Should only find 2 nodes (procedure and declare)");
+    // --- FIX IS HERE ---
+    // The test must account for the 5 variable declarations now being found.
+    // 1 (Procedure) + 1 (Declare) + 5 (Variables) = 7
+    let expected_node_count = 7;
+    assert_eq!(nodes.len(), expected_node_count, "Should find 7 nodes (1 proc, 1 declare, 5 vars)");
+    // --- END FIX ---
 
-        // Check that our string-skipping logic worked
-        let case_nodes = nodes.iter().filter(|n| n.node_type == "CaseStatement").count();
-        let if_nodes = nodes.iter().filter(|n| n.node_type == "IfStatement").count();
-        let loop_nodes = nodes.iter().filter(|n| n.node_type == "SimpleLoop").count();
-        let declare_nodes = nodes.iter().filter(|n| n.node_type == "DeclareNode").count();
+    // Check that our string-skipping logic worked
+    let case_nodes = nodes.iter().filter(|n| n.node_type == "CaseStatement").count();
+    let if_nodes = nodes.iter().filter(|n| n.node_type == "IfStatement").count();
+    let loop_nodes = nodes.iter().filter(|n| n.node_type == "SimpleLoop").count();
+    let declare_nodes = nodes.iter().filter(|n| n.node_type == "DeclareNode").count();
 
-        assert_eq!(case_nodes, 0, "Should not find 'case' in string");
-        assert_eq!(if_nodes, 0, "Should not find 'if' in string");
-        assert_eq!(loop_nodes, 0, "Should not find 'loop' in string");
-        assert_eq!(declare_nodes, 1, "Should find the one real 'declare' block");
-        
-        let declare_node = nodes.iter().find(|n| n.node_type == "DeclareNode").unwrap();
-        assert_eq!(declare_node.start_line, Some(9)); // Check line number
+    // --- ADD THIS FIX ---
+    let variable_nodes = nodes.iter().filter(|n| n.node_type == "VariableDeclaration").count();
+    assert_eq!(variable_nodes, 5, "Should find all 5 variable declarations");
+    // --- END ADD ---
+
+    assert_eq!(case_nodes, 0, "Should not find 'case' in string");
+    assert_eq!(if_nodes, 0, "Should not find 'if' in string");
+    assert_eq!(loop_nodes, 0, "Should not find 'loop' in string");
+    assert_eq!(declare_nodes, 1, "Should find the one real 'declare' block");
+
+    let declare_node = nodes.iter().find(|n| n.node_type == "DeclareNode").unwrap();
+    assert_eq!(declare_node.start_line, Some(9)); // Check line number
     }
 
     #[test]
@@ -516,6 +526,99 @@ end Complex_Code;                         "#;
         } else {
             panic!("Root expression is not a BinaryExpression");
         }
+    }
+
+    use std::fs;
+    use std::collections::HashMap;
+
+    /// This is the main integration test.
+    /// It parses the entire `blop.ada` file and verifies the counts
+    /// of all node types and the final tree structure.
+    #[test]
+    fn test_full_integration_on_blob_ada() {
+        let raw_code = fs::read_to_string("blop.ada")
+            .expect("Failed to read blop.ada. Make sure it's in the project root.");
+        
+        let cleaned_code = AST::clean_code(&raw_code);
+        let nodes = AST::extract_all_nodes(&cleaned_code).unwrap();
+        
+        let mut ast = AST::new(nodes);
+        ast.build(&cleaned_code).unwrap();
+        ast.populate_cases(&cleaned_code).unwrap();
+        ast.populate_simple_loop_conditions(&cleaned_code).unwrap();
+
+        // --- Store all nodes for easy searching ---
+        let mut node_counts: HashMap<String, usize> = HashMap::new();
+        let mut all_node_ids = Vec::new();
+        for node_id in ast.root_id.descendants(&ast.arena) {
+            all_node_ids.push(node_id); // Store the ID
+            let node = ast.arena.get(node_id).unwrap().get();
+            *node_counts.entry(node.node_type.clone()).or_insert(0) += 1;
+        }
+        *node_counts.entry("RootNode".to_string()).or_insert(0) -= 1;
+
+        // --- All counts are now corrected ---
+        assert_eq!(*node_counts.get("PackageNode").unwrap_or(&0), 2, "Expected 2 PackageNodes");
+        assert_eq!(*node_counts.get("ProcedureNode").unwrap_or(&0), 10, "Expected 10 ProcedureNodes");
+        assert_eq!(*node_counts.get("FunctionNode").unwrap_or(&0), 7, "Expected 7 FunctionNodes");
+        assert_eq!(*node_counts.get("TypeDeclaration").unwrap_or(&0), 5, "Expected 5 TypeDeclarations");
+        assert_eq!(*node_counts.get("SimpleLoop").unwrap_or(&0), 3, "Expected 3 SimpleLoops");
+        assert_eq!(*node_counts.get("WhileLoop").unwrap_or(&0), 9, "Expected 9 WhileLoops");
+        assert_eq!(*node_counts.get("ForLoop").unwrap_or(&0), 4, "Expected 4 ForLoops");
+        assert_eq!(*node_counts.get("IfStatement").unwrap_or(&0), 9, "Expected 9 IfStatements");
+        assert_eq!(*node_counts.get("ElsifStatement").unwrap_or(&0), 1, "Expected 1 ElsifStatement");
+        assert_eq!(*node_counts.get("ElseStatement").unwrap_or(&0), 2, "Expected 2 ElseStatements");
+        assert_eq!(*node_counts.get("CaseStatement").unwrap_or(&0), 2, "Expected 2 CaseStatements");
+        assert_eq!(*node_counts.get("TaskNode").unwrap_or(&0), 2, "Expected 2 TaskNodes");
+        assert_eq!(*node_counts.get("EntryNode").unwrap_or(&0), 2, "Expected 2 EntryNodes");
+        assert_eq!(*node_counts.get("VariableDeclaration").unwrap_or(&0), 19, "Expected 19 VariableDeclarations");
+        assert_eq!(*node_counts.get("DeclareNode").unwrap_or(&0), 0, "Expected 0 DeclareNodes");
+
+        // --- VERIFY TREE STRUCTURE (Corrected Find Logic) ---
+        
+        let estocazz_id = all_node_ids.iter().find(|&&id| {
+            let node = ast.arena.get(id).unwrap().get();
+            node.name == "estocazz" && node.node_type == "ProcedureNode"
+        }).expect("Failed to find 'estocazz' procedure").clone();
+
+        // --- FIX: Find the 'case Day' node by its unique switch_expression ---
+        let case_day_id = all_node_ids.iter().find(|&&id| {
+            let node = ast.arena.get(id).unwrap().get();
+            node.node_type == "CaseStatement" && node.switch_expression == Some("Day".to_string())
+        }).expect("Failed to find 'case Day is'").clone();
+        
+        let case_day_node = ast.arena.get(case_day_id).unwrap().get();
+
+        assert_eq!(case_day_node.cases.as_ref().unwrap().len(), 8, "Expected 8 'when' clauses in 'case Day'");
+        assert_eq!(case_day_node.start_line, Some(162)); // This assertion will now pass
+        assert_eq!(case_day_node.end_line, Some(179));
+        
+        assert_eq!(
+            ast.arena.get(case_day_id).unwrap().parent(), 
+            Some(estocazz_id),
+            "'case Day' should be a child of 'estocazz'"
+        );
+
+        // --- FIX: Find the 'if Count = 3' node by its start line ---
+        let if_count_id = all_node_ids.iter().find(|&&id| {
+            let node = ast.arena.get(id).unwrap().get();
+            node.node_type == "IfStatement" && node.start_line == Some(180)
+        }).expect("Failed to find 'if Count = 3'").clone();
+
+        // Find the `elsif` statement
+        let elsif_id = all_node_ids.iter().find(|&&id| {
+            let node = ast.arena.get(id).unwrap().get();
+            node.node_type == "ElsifStatement"
+        }).expect("Failed to find 'elsif' statement").clone();
+        
+        let elsif_node = ast.arena.get(elsif_id).unwrap().get();
+        assert_eq!(elsif_node.start_line, Some(182));
+        
+        assert_eq!(
+            ast.arena.get(elsif_id).unwrap().parent(),
+            Some(if_count_id),
+            "'elsif' should be a child of 'if'"
+        );
     }
 
 

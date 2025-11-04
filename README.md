@@ -24,8 +24,7 @@ Add the following dependency to your Cargo manifest...
 
 ```toml
 [dependencies]
-ADA_Standards = "1.0.1" 
-
+ADA_Standards = "1.1.0" 
 ```
 
 ...and see the [docs](https://docs.rs/ADA_Standards) for how to use it.

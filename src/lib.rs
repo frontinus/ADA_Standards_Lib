@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 //! # ADA_Standards
 //!
 //! [![crates.io](https://img.shields.io/crates/v/ADA_Standards.svg)](https://crates.io/crates/ADA_Standards)
@@ -49,7 +50,7 @@
 //! 
 ///!
 
-use indextree::{Arena, Node, NodeId};
+use indextree::{Arena, NodeId};
 use regex::Regex;
 use fancy_regex::Regex as Reg;
 use lazy_static::lazy_static;
@@ -124,12 +125,14 @@ pub enum Unaries {
     NOT,
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Memberships {
     NOT_IN,
     IN,
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Binaries {
     AND,
@@ -484,22 +487,19 @@ impl AST {
 
 
 // Add this function inside `impl AST { ... }`
-fn associate_end_lines_in_arena(&mut self, code_text: &str) -> Result<(), ASTError> {
+fn associate_end_lines_in_arena(&mut self, code_text: &str, node_ids: &[NodeId]) -> Result<(), ASTError> {
     // 1. Extract all end statements
     let end_statements = AST::extract_end_statements(code_text)?;
 
     // 2. Get NodeIds and start indices for nodes needing an end line.
-    //    These are already in sorted order because self.node_ids is parallel to sorted self.nodes_data.
-    let start_node_ids: Vec<(NodeId, usize)> = self.node_ids.iter()
-        .filter_map(|&opt_id| opt_id) // Get NodeId from Option
-        .filter(|&node_id| self.arena.get(node_id).unwrap().get().end_line.is_none()) // Filter nodes without end_line
-        .map(|node_id| (node_id, self.arena.get(node_id).unwrap().get().start_index.unwrap_or(0))) // Map to (NodeId, start_index)
+    let start_node_ids: Vec<(NodeId, usize)> = node_ids.iter()
+        .filter(|&&node_id| self.arena.get(node_id).unwrap().get().end_line.is_none()) // Filter nodes without end_line
+        .map(|&node_id| (node_id, self.arena.get(node_id).unwrap().get().start_index.unwrap_or(0))) // Map to (NodeId, start_index)
         .collect();
 
     // 3. Create combined event list (NodeId starts + End statements)
     let mut events: Vec<ParseEvent> = Vec::new();
     for &(node_id, start_index) in &start_node_ids {
-        // Use the StartNodeId variant
         events.push(ParseEvent::StartNodeId { node_id, index: start_index });
     }
     for end_statement in &end_statements {
@@ -515,7 +515,6 @@ fn associate_end_lines_in_arena(&mut self, code_text: &str) -> Result<(), ASTErr
     events.sort_by_key(|e| match e {
         ParseEvent::StartNodeId { index, .. } => *index,
         ParseEvent::End { index, .. } => *index,
-        // _ => usize::MAX, // Remove if ParseEvent only has these two variants now
     });
 
     // 5. Process events using a stack of NodeIds
@@ -529,21 +528,21 @@ fn associate_end_lines_in_arena(&mut self, code_text: &str) -> Result<(), ASTErr
             ParseEvent::End { word, line, end_index, .. } => {
                 // Define the matching logic based on the 'end' word
                 let match_logic = |node_id: &NodeId| -> bool {
-                    // Get data directly from the arena for the check
                     if let Some(node) = self.arena.get(*node_id) {
                          let node_data = node.get();
-                         if word.is_empty() { // "end;"
-                             AST::get_end_keyword(&node_data.node_type) == Some("")
-                         } else if UNNAMED_END_KEYWORDS.contains(&word.as_str()) { // "end loop;"
-                             AST::get_end_keyword(&node_data.node_type) == Some(word.as_str())
-                         } else { // "end Name;"
-                             node_data.name == word && AST::get_end_keyword(&node_data.node_type) == Some("name")
+                         let keyword_type = AST::get_end_keyword(&node_data.node_type);
+
+                         if word.is_empty() {
+                             keyword_type == Some("") || keyword_type == Some("name")
+                         } else if UNNAMED_END_KEYWORDS.contains(&word.as_str()) { // <-- This uses the constant
+                             keyword_type == Some(word.as_str())
+                         } else {
+                             node_data.name == word && keyword_type == Some("name")
                          }
-                    } else {
-                        false // NodeId not valid in arena? Should not happen.
-                    }
+                    } else { false }
                 };
 
+                // --- THIS IS THE CORRECT LOGIC ---
                 // Find the most recent node on the stack that matches
                 if let Some(pos) = stack.iter().rposition(match_logic) {
                     let node_id_to_update = stack.remove(pos);
@@ -553,27 +552,26 @@ fn associate_end_lines_in_arena(&mut self, code_text: &str) -> Result<(), ASTErr
                          node_data.end_line = Some(line);
                          node_data.end_index = Some(end_index);
                     } else {
-                        // This would indicate a serious internal error
                         return Err(ASTError::NodeNotInArena(format!("NodeId {:?} not found during update", node_id_to_update)));
                     }
                 } else {
-                    // Log warning or handle unmatched 'end' - do not error immediately
-                    eprintln!("Warning: Unmatched 'end {}' at line {}", word, line);
+                     // This 'end' statement doesn't match anything on the stack.
+                     // This is NOT an error, just an unmatched 'end'.
+                     eprintln!("Warning: Unmatched 'end {}' at line {}", word, line);
                 }
+                // --- END CORRECT LOGIC ---
             }
-            // Remove if ParseEvent only has StartNodeId and End
-            // _ => {}
         }
     }
 
-    // Stack check - consider making this optional or a warning
     if !stack.is_empty() {
         eprintln!("Warning: Stack not empty after associating end lines. Mismatched blocks?");
-        // return Err(ASTError::NoMatchFound); // Decide if this is a hard error
     }
 
     Ok(())
 }
+
+
 
 
 pub fn build(&mut self, code_text: &str) -> Result<(), ASTError> {
@@ -584,58 +582,70 @@ pub fn build(&mut self, code_text: &str) -> Result<(), ASTError> {
     self.arena = Arena::new();
     self.root_id = self.arena.new_node(NodeData::new("root".to_string(), "RootNode".to_string(), None, None, false));
 
-    // 3. Populate the arena and create node_ids IN PARALLEL with the *sorted* nodes_data
-    self.node_ids = self.nodes_data.iter()
-        .map(|node_data| Some(self.arena.new_node(node_data.clone())))
+    // 3. Populate the arena and create node_ids LOCALLY
+    let node_ids: Vec<NodeId> = self.nodes_data.iter()
+        .map(|node_data| self.arena.new_node(node_data.clone()))
         .collect();
 
-    // 4. ✅ CORRECT: Associate end lines *now*, operating directly on the arena
-    self.associate_end_lines_in_arena(code_text)?; // <--- This is the correct helper call
+    // 4. Associate end lines *now*, operating directly on the arena
+    self.associate_end_lines_in_arena(code_text, &node_ids)?;
 
     // --- Tree Building Logic ---
-    let mut stack: Vec<(NodeId, usize)> = vec![(self.root_id, usize::MAX)]; // Stack: (NodeId, effective_end_line)
+    let mut stack: Vec<NodeId> = vec![self.root_id]; // Stack of NodeIds
 
     // Iterate using the node_ids we just created
-    for node_id_option in &self.node_ids { // Iterate over node_ids directly
-         if node_id_option.is_none() {
-             continue;
-         }
-         let current_node_id = node_id_option.unwrap();
-
-         // Get the necessary data *before* potentially modifying the arena.
-         let (current_start_line, current_effective_end) = {
-             // Borrow immutably just for this block
+    for (index, &current_node_id) in node_ids.iter().enumerate() {
+         
+         let current_start_line = {
              let node_data_ref = self.arena.get(current_node_id).unwrap().get();
-             (
-                 node_data_ref.start_line.unwrap_or(0),
-                 node_data_ref.end_line.unwrap_or(usize::MAX) // Get end_line AFTER associate_end_lines ran
-             )
-         }; // Immutable borrow ends here
+             node_data_ref.start_line.unwrap_or(0)
+         };
 
+         // Pop parents from the stack until we find the correct one.
+         while let Some(&parent_id) = stack.last() {
+             if parent_id == self.root_id {
+                 break; // Never pop the root
+             }
 
-         // Pop parents whose scope ends before the current node starts
-         while let Some(&(_parent_id, parent_effective_end)) = stack.last() {
-             if parent_effective_end < current_start_line {
-                 stack.pop();
+             let parent_data = self.arena.get(parent_id).unwrap().get();
+
+             if let Some(parent_end_line) = parent_data.end_line {
+                 if parent_end_line < current_start_line {
+                     stack.pop();
+                 } else {
+                     break;
+                 }
              } else {
-                 break; // Found the correct parent
+                 // Parent's end_line is None (unclosed block)
+                 break;
              }
          }
 
          // Append to the parent currently on top of the stack
-         // This mutable borrow is now safe.
-         if let Some(&(parent_node_id, _)) = stack.last() {
+         if let Some(&parent_node_id) = stack.last() {
             parent_node_id.append(current_node_id, &mut self.arena);
          } else {
              self.root_id.append(current_node_id, &mut self.arena);
          }
 
-         // Push the current node onto the stack using the copied end line value.
-         stack.push((current_node_id, current_effective_end));
+         // --- THIS IS THE FIX ---
+         // Get the *original* node data (pre-association)
+         let node_data_original = &self.nodes_data[index];
+         
+         // We only push a node onto the stack if it's a container.
+         // A container is any node that *originally* had no end line
+         // (because its end is a separate "end ..." statement).
+         if node_data_original.end_line.is_none() {
+             // This is the logic from the buggy version, but because
+             // `extract_procedures_functions` is now fixed,
+             // `procedure Free` will have its `end_line` set and
+             // will NOT be pushed onto the stack.
+             stack.push(current_node_id);
+         }
+         // --- END FIX ---
     }
     Ok(())
 }
-
 
 pub fn print_tree(&self) {
         println!("{}", self.output_tree());
@@ -681,15 +691,33 @@ pub fn print_nodes_info(&self) -> Result<(), ASTError> {
 
 pub fn get_end_keyword(node_type: &str) -> Option<&'static str> {
     match node_type {
+        // Blocks that end with "end <name>;"
         "PackageNode" => Some("name"),
         "ProcedureNode" => Some("name"),
         "FunctionNode" => Some("name"),
+        
+        // --- THIS IS THE FIX ---
+        "TaskNode" => Some("name"),
+        "EntryNode" => Some("name"),
+        // --- END FIX ---
+
+        // Blocks that end with "end <keyword>;"
         "SimpleLoop" => Some("loop"),
         "WhileLoop" => Some("loop"),
         "ForLoop" => Some("loop"),
         "IfStatement" => Some("if"),
         "CaseStatement" => Some("case"),
+        
+        // Match "end record;"
+        "TypeDeclaration" => Some("record"), 
+
+        // Blocks that end with "end;"
         "DeclareNode" => Some(""),
+        
+        // These blocks don't have their own "end"
+        "ElsifStatement" => None,
+        "ElseStatement" => None,
+        
         _ => None,
     }
 }
@@ -841,8 +869,8 @@ pub fn extract_packages(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 /// Ok(())
 /// # }
 /// ```
-/// 
 pub fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+    // Regex is fine, it captures the signature.
     let func_proc_pattern = Reg::new(
         r"(?im)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<category>\bprocedure|function\b)\s+(?P<name>[^\s\(\;]*)(?:\s*\((?P<params>[\s\S]*?(?=\)))\))?(?:\s*return\s*(?P<return_statement>[\w\.\_\-]+))?"
     ).map_err(|_| ASTError::RegexError)?;
@@ -852,24 +880,30 @@ pub fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, AS
 
     for cap_res in func_proc_pattern.captures_iter(code_text) {
         let mat = cap_res.map_err(|_| ASTError::RegexError)?;
-        let start_line = code_text[..mat.get(0).unwrap().start()].lines().count() + 1;
-        let start_index = mat.get(0).unwrap().start();
-        let category = mat.name("category").unwrap().as_str().to_lowercase();
+        let full_match = mat.get(0).ok_or(ASTError::MatchItemMissing)?;
+        let category_keyword = mat.name("category").ok_or(ASTError::InvalidCapture)?;
+
+        let start_line = code_text[..category_keyword.start()].matches('\n').count() + 1;
+        let start_index = category_keyword.start();
+        let category = category_keyword.as_str().to_lowercase();
         let name = mat.name("name").unwrap().as_str().to_string();
-        let is_body = {
-            let search_text = &code_text[mat.get(0).unwrap().end()..];
-            if let Some(end_match) = end_pattern.find(search_text) {
-                if end_match.as_str().trim() == "is" {
-                    let text_after_is = &search_text[end_match.end()..];
-                    !text_after_is.trim_start().starts_with("new")
-                } else {
-            // The token was ";", which is always a specification.
-            false
+
+        // --- NEW is_body LOGIC ---
+        let mut is_body = false;
+        let search_text = &code_text[full_match.end()..];
+        let end_match_opt = end_pattern.find(search_text);
+
+        if let Some(end_match) = end_match_opt {
+            if end_match.as_str().trim() == "is" {
+                // It's a body *unless* it's "is new"
+                let text_after_is = &search_text[end_match.end()..];
+                if !text_after_is.trim_start().starts_with("new") {
+                    is_body = true;
+                }
             }
-            } else {
-                false
-            }
-        };
+            // if it's ";", is_body stays false.
+        }
+        // --- END NEW LOGIC ---
 
         let mut node = NodeData::new(
             name.clone(),
@@ -879,17 +913,24 @@ pub fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, AS
             is_body,
         );
 
+        node.arguments = Some(AST::parse_parameters(mat.name("params").map(|m| m.as_str())));
+        
+        // --- NEW END_LINE LOGIC ---
         if !is_body {
-            let search_text = &code_text[mat.get(0).unwrap().end()..];
-            if let Some(end_match) = end_pattern.find(search_text) {
-                if end_match.as_str().trim() == ";" {
-                    node.end_line = Some(start_line);
-                    node.end_index = Some(mat.get(0).unwrap().end() + end_match.end());
-                }
+            // It's a spec (e.g., "proc X;" or "proc X is new Y;").
+            // We MUST find its closing semicolon to set the end_line.
+            // This prevents it from being pushed onto the build stack.
+            let spec_search_text = &code_text[full_match.end()..];
+            // Find the *first* semicolon after the signature
+            if let Some(semicolon_match) = Regex::new(r";").unwrap().find(spec_search_text) {
+                let end_pos = full_match.end() + semicolon_match.end();
+                node.end_line = Some(code_text[..end_pos].matches('\n').count() + 1);
+                node.end_index = Some(end_pos);
             }
         }
-
-        // Handle nested names (e.g., Package.Procedure)
+        // --- END NEW LOGIC ---
+        
+        // ... (rest of function: nested names, etc. is fine) ...
         let depth_dot_level = name.chars().filter(|&c| c == '.').count();
         if depth_dot_level > 0 {
             let parts: Vec<&str> = name.split('.').collect();
@@ -928,7 +969,6 @@ pub fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, AS
 
         nodes.push(node);
     }
-
     Ok(nodes)
 }
 
@@ -938,24 +978,44 @@ pub fn extract_procedures_functions(code_text: &str) -> Result<Vec<NodeData>, AS
 /// ```
 /// use ADA_Standards::{NodeData, ASTError, AST};
 /// # fn main() -> Result<(), ASTError> {
-/// let code = r#"procedure estocazz is
-/// type CustomType is record
-///     DataString : String(1 .. 3) := "oui";
-///     DataFloat : Float;
-/// end record;"#;
+/// let code = r#"
+/// procedure estocazz is
+///    type CustomType is record
+///       DataString : String(1 .. 3) := "oui";
+///       DataFloat : Float;
+///    end record;
+///
+///    SMR : Some_Register_Type;
+///    for SMR use at 16#F000#; -- This is the 'at' clause
+/// begin
+///    null;
+/// end estocazz;
+/// "#;
 /// let c_code = AST::clean_code(code);
 /// let nodes = AST::extract_type_declarations(&c_code)?;
-/// assert_eq!(nodes.len(), 1);
-/// assert_eq!(nodes[0].name, "CustomType");
-/// assert_eq!(nodes[0].node_type, "TypeDeclaration");
-/// assert_eq!(nodes[0].is_body, Some(false)); // Specification
+///
+/// // Should find 2 nodes: CustomType and the 'for' clause
+/// assert_eq!(nodes.len(), 2);
+///
+/// let type_node = nodes.iter()
+///     .find(|n| n.name == "CustomType")
+///     .expect("Did not find 'CustomType' node");
+/// assert_eq!(type_node.start_line, Some(3));
+///
+/// let for_node = nodes.iter()
+///     .find(|n| n.name == "SMR")
+///     .expect("Did not find 'for ... use at' node");
+///
+/// assert_eq!(for_node.category_type, Some("for".to_string()));
+/// assert_eq!(for_node.type_kind, Some("at_clause".to_string()));
+/// assert_eq!(for_node.start_line, Some(9));
+/// assert_eq!(for_node.base_type, Some("16#F000#".to_string()));
+///
 /// Ok(())
 /// # }
 /// ```
 pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     // PATTERN 1: Matches 'type' and 'subtype' declarations.
-    // This regex is a direct translation and improvement of the first Python pattern.
-    // It correctly handles derived types (`is new`), enumerations (`is (...)`), and base types with ranges.
     let type_subtype_pattern = Reg::new(
         r#"(?ims)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<category>\btype\b|\bsubtype\b)\s+(?P<name>.*?)(?:\s+is(?:\s+new\s+(?P<base_type>[\w\._\-]+)|(?:\s*(?P<tuple_type>\([^)]+\))|\s*(?P<type_kind>[\w\._\-]+(?:\s*range\s*.*?)?))))"#
     ).map_err(|_| ASTError::RegexError)?;
@@ -964,6 +1024,13 @@ pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTEr
     let repr_clause_pattern = Reg::new(
         r#"(?im)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<category>\bfor\b)\s+(?P<name>\w+)\s+use\s+(?P<type_kind>\brecord\b)"#
     ).map_err(|_| ASTError::RegexError)?;
+
+    // --- NEW PATTERN ---
+    // PATTERN 3: Matches 'for ... use at ...' representation clauses.
+    let repr_at_pattern = Reg::new(
+        r#"(?ims)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<category>\bfor\b)\s+(?P<name>\S+)\s+use\s+at\s+(?P<address>.*?);"#
+    ).map_err(|_| ASTError::RegexError)?;
+    // --- END NEW PATTERN ---
 
     let mut nodes: Vec<NodeData> = Vec::new();
 
@@ -974,7 +1041,7 @@ pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTEr
         let category_match = caps.name("category").ok_or(ASTError::InvalidCapture)?;
 
         let start_index = full_match.start();
-        let start_line = code_text[..start_index].lines().count() + 1;
+        let start_line = code_text[..start_index].matches('\n').count() + 1;
         let column = start_index - code_text[..start_index].rfind('\n').map_or(0, |i| i + 1);
 
         let category = category_match.as_str().to_lowercase();
@@ -998,14 +1065,13 @@ pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTEr
             None
         };
 
-        // Determine if the declaration is a single-line spec
         let (end_line, end_index) = if type_kind == "record" {
             (None, None) // Records are multi-line, `associate_end_lines` will find the end
         } else {
             // Most other types are single-line declarations ending in ';'
             let end_pos = code_text[full_match.end()..].find(';').map(|p| full_match.end() + p + 1);
             if let Some(pos) = end_pos {
-                (Some(code_text[..pos].lines().count()), Some(pos))
+                (Some(code_text[..pos].matches('\n').count() + 1), Some(pos))
             } else {
                 (None, None)
             }
@@ -1033,10 +1099,10 @@ pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTEr
     // --- Pass 2: Find 'for ... use record' clauses ---
     for cap_res in repr_clause_pattern.captures_iter(code_text) {
         let caps = cap_res.map_err(|_| ASTError::RegexError)?;
-        let full_match = caps.get(0).ok_or(ASTError::MatchItemMissing)?;
+        let category_keyword = caps.name("category").ok_or(ASTError::InvalidCapture)?;
 
-        let start_index = full_match.start();
-        let start_line = code_text[..start_index].lines().count() + 1;
+        let start_index = category_keyword.start();
+        let start_line = code_text[..start_index].matches('\n').count() + 1;
         let column = start_index - code_text[..start_index].rfind('\n').map_or(0, |i| i + 1);
         
         let mut node = NodeData::new(
@@ -1051,10 +1117,43 @@ pub fn extract_type_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTEr
         node.category_type = Some("for".to_string()); // Category is "for"
         node.type_kind = Some("record".to_string()); // The kind is always record for this pattern
         
-        // end_line and end_index are None; will be found by `associate_end_lines`
+        nodes.push(node);
+    }
+
+    // --- NEW SECTION ---
+    // --- Pass 3: Find 'for ... use at' clauses ---
+    for cap_res in repr_at_pattern.captures_iter(code_text) {
+        let caps = cap_res.map_err(|_| ASTError::RegexError)?;
+        let full_match = caps.get(0).ok_or(ASTError::MatchItemMissing)?;
+        let category_keyword = caps.name("category").ok_or(ASTError::InvalidCapture)?;
+
+        let start_index = category_keyword.start();
+        let start_line = code_text[..start_index].matches('\n').count() + 1;
+        let column = start_index - code_text[..start_index].rfind('\n').map_or(0, |i| i + 1);
+        
+        let name = caps.name("name").ok_or(ASTError::InvalidCapture)?.as_str().to_string();
+        let address = caps.name("address").ok_or(ASTError::InvalidCapture)?.as_str().trim().to_string();
+
+        let mut node = NodeData::new(
+            name,
+            "TypeDeclaration".to_string(),
+            Some(start_line),
+            Some(start_index),
+            false,
+        );
+
+        node.column = Some(column);
+        node.category_type = Some("for".to_string());
+        node.type_kind = Some("at_clause".to_string()); // New kind
+        node.base_type = Some(address); // Store the address in base_type
+        
+        // This is a single-line declaration ending in ';'
+        node.end_line = Some(code_text[..full_match.end()].matches('\n').count() + 1);
+        node.end_index = Some(full_match.end());
         
         nodes.push(node);
     }
+    // --- END NEW SECTION ---
 
     Ok(nodes)
 }
@@ -1437,7 +1536,7 @@ pub fn extract_while_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
 pub fn extract_for_loops(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
     // FIX 1: Use Reg::new and 's' (dotall) flag.
     let forloops_pattern = Reg::new(
-        r"(?is)(?P<Capturefor>\bfor\b)\s*(?P<index>.*?)\s*\bin\b\s*(?:(?P<loop_direction>.*?))?\s*(?P<primavar>[^\s]*)\s*(?:(?=\brange\b)\brange\b\s*(?P<frst>.*?)\s+\.\.\s*(?P<scnd>.*?)\s+\bloop\b|(?:(?=\.\.)\.\.\s*(?P<range_end>.*?)\s*\bloop\b|\s*\bloop\b))"
+        r#"(?i)(?P<Capturefor>\bfor\b)\s*(?P<index>.*?)\s*\bin\b\s*(?:(?P<loop_direction>.*?))?\s*(?P<primavar>[^\s]*)\s*(?:(?=\brange\b)\brange\b\s*(?P<frst>(?:.|\n)*?)\s+\.\.\s*(?P<scnd>(?:.|\n)*?)\s+\bloop\b|(?:(?=\.\.)\.\.\s*(?P<range_end>(?:.|\n)*?)\s*\bloop\b|\s*\bloop\b))"#
     ).map_err(|_| ASTError::RegexError)?;
     
     let mut nodes = Vec::new();
@@ -1523,7 +1622,10 @@ pub fn extract_statement_nodes(code_text: &str) -> Result<Vec<NodeData>,ASTError
     let mut new_nodes_data: Vec<NodeData> = Vec::new();
     new_nodes_data.extend(AST::extract_if_statements(code_text)?);
     new_nodes_data.extend(AST::extract_case_statements(code_text)?);
-    // REMOVE this line: nodes.extend(new_nodes_data.clone());
+
+    new_nodes_data.extend(AST::extract_elsif_statements(code_text)?);
+    new_nodes_data.extend(AST::extract_else_statements(code_text)?);    
+
     Ok(new_nodes_data) // Just return the new list
 }
 
@@ -1800,6 +1902,383 @@ pub fn extract_cases_from_body(body_text: &str, re_when: &Reg) -> Vec<String> {
         }
     }
     cases
+}
+
+/// Parses a raw parameter string (the content between parentheses)
+/// into a vector of ArgumentData.
+///
+/// # Examples
+/// ```
+/// use ADA_Standards::{AST, ArgumentData};
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let code = "Dato, Porta: out Integer; P : in My_Type; Flag : Boolean := True";
+///
+/// // We pass the string as an Option to simulate a regex match
+/// let args = AST::parse_parameters(Some(code));
+///
+/// assert_eq!(args.len(), 4);
+///
+/// assert_eq!(args[0].name, "Dato");
+/// assert_eq!(args[0].mode, "out");
+/// assert_eq!(args[0].data_type, "Integer");
+/// assert_eq!(args[0].default_value, None);
+///
+/// assert_eq!(args[1].name, "Porta");
+/// assert_eq!(args[1].mode, "out");
+///
+/// assert_eq!(args[2].name, "P");
+/// assert_eq!(args[2].mode, "in");
+/// assert_eq!(args[2].data_type, "My_Type");
+///
+/// assert_eq!(args[3].name, "Flag");
+/// assert_eq!(args[3].mode, "in"); // Default mode
+/// assert_eq!(args[3].data_type, "Boolean");
+/// assert_eq!(args[3].default_value, Some("True".to_string()));
+/// Ok(())
+/// # }
+/// ```
+pub fn parse_parameters(params_opt: Option<&str>) -> Vec<ArgumentData> {
+    let params_str = match params_opt {
+        Some(s) => s.trim(),
+        None => return Vec::new(),
+    };
+
+    let mut all_args = Vec::new();
+    if params_str.is_empty() {
+        return all_args;
+    }
+
+    // 1. Split parameter groups by semicolon
+    for group in params_str.split(';') {
+        if group.trim().is_empty() {
+            continue;
+        }
+
+        // 2. Split name(s) from type/mode spec
+        let parts: Vec<&str> = group.splitn(2, ':').map(str::trim).collect();
+        if parts.len() != 2 {
+            // Malformed group, e.g., no colon. Skip it.
+            // You could log a warning here.
+            continue;
+        }
+
+        let names_part = parts[0];
+        let type_part = parts[1];
+
+        // 3. Parse the type_part: split default value " := "
+        let (spec_part, default_value) = if let Some((spec, default)) = type_part.split_once(" := ") {
+            (spec.trim(), Some(default.trim().to_string()))
+        } else {
+            (type_part.trim(), None)
+        };
+
+        // 4. Parse mode and data_type from the spec_part
+        let (mode, data_type) = if let Some(stripped) = spec_part.strip_prefix("in out") {
+            // Check 'in out' first
+            ("in out", stripped.trim())
+        } else if let Some(stripped) = spec_part.strip_prefix("out") {
+            ("out", stripped.trim())
+        } else if let Some(stripped) = spec_part.strip_prefix("in") {
+            ("in", stripped.trim())
+        } else {
+            ("in", spec_part) // Default mode is "in"
+        };
+
+        let data_type_str = data_type.to_string();
+
+        // 5. Create ArgumentData for each comma-separated name
+        for name in names_part.split(',') {
+            if name.trim().is_empty() {
+                continue;
+            }
+            all_args.push(ArgumentData {
+                name: name.trim().to_string(),
+                mode: mode.to_string(),
+                data_type: data_type_str.clone(),
+                default_value: default_value.clone(),
+            });
+        }
+    }
+
+    all_args
+}
+
+
+/// Extracts Ada `task` and `task body` declarations from source code.
+///
+/// # Examples
+/// ```
+/// use ADA_Standards::{NodeData, ASTError, AST};
+/// # fn main() -> Result<(), ASTError> {
+/// let code = r#"
+///   task MyTask is
+///     entry MyEntry;
+///   end MyTask;
+///   
+///   task body MyTask is
+///   begin
+///     null;
+///   end MyTask;
+/// "#;
+/// let c_code = AST::clean_code(code);
+/// let nodes = AST::extract_tasks(&c_code)?;
+/// assert_eq!(nodes.len(), 2);
+///
+/// assert_eq!(nodes[0].name, "MyTask");
+/// assert_eq!(nodes[0].node_type, "TaskNode");
+/// assert_eq!(nodes[0].is_body, Some(false)); // Spec
+/// assert_eq!(nodes[0].start_line, Some(2));
+///
+/// assert_eq!(nodes[1].name, "MyTask");
+/// assert_eq!(nodes[1].node_type, "TaskNode");
+/// assert_eq!(nodes[1].is_body, Some(true)); // Body
+/// assert_eq!(nodes[1].start_line, Some(6));
+/// Ok(())
+/// # }
+/// ```
+pub fn extract_tasks(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+    // This regex is adapted from extract_packages
+    let task_pattern = Reg::new(
+        r#"(?im)^(?!\s*--)\s*(?P<category>\btask\b)(?:\s+(?P<body>\bbody\b))?\s+(?P<name>\S+)"#
+    ).map_err(|_| ASTError::RegexError)?;
+
+    let mut nodes: Vec<NodeData> = Vec::new();
+
+    for cap_res in task_pattern.captures_iter(code_text) {
+        let mat = cap_res.map_err(|_| ASTError::RegexError)?;
+        let full_match = mat.get(0).ok_or(ASTError::MatchItemMissing)?;
+        let category_keyword = mat.name("category").ok_or(ASTError::InvalidCapture)?;
+        
+        let start_line = code_text[..category_keyword.start()].matches('\n').count() + 1;
+        let start_index = category_keyword.start();
+        let name = mat.name("name").unwrap().as_str().to_string();
+        let is_body = mat.name("body").is_some();
+
+        // Check for an immediate semicolon (for task type declarations, e.g., "task type T;")
+        let search_text = &code_text[full_match.end()..];
+        let end_search = Regex::new(r"^\s*;").unwrap().find(search_text);
+
+        let mut node = NodeData::new(
+            name, 
+            "TaskNode".to_string(), 
+            Some(start_line), 
+            Some(start_index), 
+            is_body
+        );
+
+        if let Some(end_match) = end_search {
+            // This is a task type declaration (spec), which ends here.
+            node.end_line = Some(start_line);
+            node.end_index = Some(full_match.end() + end_match.end());
+        }
+        
+        // For 'task is' or 'task body is', associate_end_lines_in_arena will find the 'end Name;'
+        
+        nodes.push(node);
+    }
+    
+    // Tasks don't have the same complex nesting/sorting as packages, so we just return
+    Ok(nodes)
+}
+
+/// Extracts Ada `entry` declarations (specs) and bodies from source code.
+///
+/// # Examples
+/// ```
+/// use ADA_Standards::{NodeData, ASTError, AST, Expression};
+/// # fn main() -> Result<(), ASTError> {
+/// let code = r#"
+///   task body MyTask is
+///     entry MyEntry(P : Integer); -- Declaration
+///
+///     entry MyEntry(P : Integer) when P > 0 is -- Body
+///     begin
+///       null;
+///     end MyEntry;
+///   end MyTask;
+/// "#;
+/// let c_code = AST::clean_code(code);
+/// let nodes = AST::extract_entries(&c_code)?;
+/// assert_eq!(nodes.len(), 2);
+///
+/// assert_eq!(nodes[0].name, "MyEntry");
+/// assert_eq!(nodes[0].node_type, "EntryNode");
+/// assert_eq!(nodes[0].is_body, Some(false)); // Spec
+/// assert_eq!(nodes[0].start_line, Some(3));
+///
+/// assert_eq!(nodes[1].name, "MyEntry");
+/// assert_eq!(nodes[1].node_type, "EntryNode");
+/// assert_eq!(nodes[1].is_body, Some(true)); // Body
+/// assert_eq!(nodes[1].start_line, Some(5));
+///
+/// // Check if condition was parsed
+/// let conds = nodes[1].conditions.as_ref().unwrap();
+/// assert!(matches!(conds.albero.as_deref(), Some(Expression::Binary(_))));
+/// Ok(())
+/// # }
+/// ```
+pub fn extract_entries(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+    // This regex is adapted from extract_procedures_functions
+    let entry_pattern = Reg::new(
+        r"(?ims)^(?!\s*--)(?:^[^\S\n]*|(?<=\n))(?P<category>\bentry\b)\s+(?P<name>[^\s\(\;]*)(?:\s*\((?P<params>[\s\S]*?(?=\)))\))?(?:\s+when\s+(?P<condition>.*?))?(?=\s*(?:is|;))"
+    ).map_err(|_| ASTError::RegexError)?;
+
+    // This pattern finds the 'is' or ';' that determines if it's a body or spec
+    let end_pattern = Regex::new(r"(?m)\s*(is|;)").map_err(|_| ASTError::RegexError)?;
+    let mut nodes: Vec<NodeData> = Vec::new();
+
+    for cap_res in entry_pattern.captures_iter(code_text) {
+        let mat = cap_res.map_err(|_| ASTError::RegexError)?;
+        let full_match = mat.get(0).ok_or(ASTError::MatchItemMissing)?;
+        let category_keyword = mat.name("category").ok_or(ASTError::InvalidCapture)?;
+
+        let start_line = code_text[..category_keyword.start()].matches('\n').count() + 1;
+        let start_index = category_keyword.start();
+        let name = mat.name("name").unwrap().as_str().to_string();
+
+        let is_body = {
+            let search_text = &code_text[full_match.end()..];
+            if let Some(end_match) = end_pattern.find(search_text) {
+                // An "entry" is a body if it's followed by "is".
+                // It's a spec if it's followed by ";".
+                end_match.as_str().trim() == "is"
+            } else {
+                false // No "is" or ";" found
+            }
+        };
+
+        let mut node = NodeData::new(
+            name,
+            "EntryNode".to_string(),
+            Some(start_line),
+            Some(start_index),
+            is_body,
+        );
+
+        node.arguments = Some(AST::parse_parameters(mat.name("params").map(|m| m.as_str())));
+
+        // If a 'when' condition was found, parse it.
+        if let Some(condition_match) = mat.name("condition") {
+            let condition_str = condition_match.as_str().to_string();
+            if !condition_str.is_empty() {
+                node.conditions = Some(AST::parse_condition_expression(&condition_str));
+            }
+        }
+        
+        // If it's a spec, find the trailing semicolon to set its end_index
+        if !is_body {
+            let search_text = &code_text[full_match.end()..];
+            if let Some(end_match) = end_pattern.find(search_text) {
+                if end_match.as_str().trim() == ";" {
+                    node.end_line = Some(start_line); // Specs are single-line
+                    node.end_index = Some(full_match.end() + end_match.end());
+                }
+            }
+        }
+        
+        // If it's a body, associate_end_lines_in_arena will find the 'end Name;'
+        
+        nodes.push(node);
+    }
+
+    Ok(nodes)
+}
+
+/// Extracts variable declarations from Ada source code.
+///
+/// This function finds variable declarations, including those with
+/// multiple identifiers, type information, and optional default values.
+/// Default values are parsed as `ConditionExpr`.
+///
+/// # Examples
+/// ```
+/// use ADA_Standards::{NodeData, ASTError, AST, Expression};
+/// # fn main() -> Result<(), ASTError> {
+/// let code = r#"
+///   procedure Main is
+///     A, B : Integer;
+///     My_Str : String := "Hello";
+///     Is_Valid : Boolean := A > 10;
+///   begin
+///     null;
+///   end Main;
+/// "#;
+/// let c_code = AST::clean_code(code);
+/// let nodes = AST::extract_variable_declarations(&c_code)?;
+///
+/// assert_eq!(nodes.len(), 4);
+///
+/// assert_eq!(nodes[0].name, "A");
+/// assert_eq!(nodes[0].node_type, "VariableDeclaration");
+/// assert_eq!(nodes[0].base_type, Some("Integer".to_string()));
+/// assert!(nodes[0].conditions.is_none());
+///
+/// assert_eq!(nodes[1].name, "B");
+/// assert_eq!(nodes[1].base_type, Some("Integer".to_string()));
+///
+/// assert_eq!(nodes[2].name, "My_Str");
+/// assert_eq!(nodes[2].base_type, Some("String".to_string()));
+/// let conds_str = nodes[2].conditions.as_ref().unwrap();
+/// assert!(matches!(conds_str.albero.as_deref(), Some(Expression::Literal(_))));
+///
+/// assert_eq!(nodes[3].name, "Is_Valid");
+/// assert_eq!(nodes[3].base_type, Some("Boolean".to_string()));
+/// let conds_bool = nodes[3].conditions.as_ref().unwrap();
+/// assert!(matches!(conds_bool.albero.as_deref(), Some(Expression::Binary(_))));
+///
+/// Ok(())
+/// # }
+/// ```
+pub fn extract_variable_declarations(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+    // FIX: Removed the skip-fail logic (\"[^\"]*\"|--.*$|)
+    // This regex now only matches the variable declaration itself.
+    let var_pattern = Reg::new(
+        r#"(?m)^[^\S\n]*(?P<names_list>[A-Za-z_][A-Za-z0-9_]*(?:[^\S\n]*,[^\S\n]*[A-Za-z_][A-Za-z0-9_]*)*)[^\S\n]*:[^\S\n]*(?P<data_type>[A-Za-z_][^\n:;]*?)(?:[^\S\n]*:=[^\S\n]*(?P<default_value>[^\n;]+?))?[^\S\n]*;"#
+    ).map_err(|_| ASTError::RegexError)?;
+
+    let mut nodes = Vec::new();
+
+    for cap_res in var_pattern.captures_iter(code_text) {
+        let captures = cap_res.map_err(|_| ASTError::RegexError)?;
+        if let Some(names_list_match) = captures.name("names_list") {
+            let _full_match = captures.get(0).ok_or(ASTError::MatchItemMissing)?;
+        
+            let data_type_str = captures.name("data_type")
+                                    .map_or("", |m| m.as_str())
+                                    .trim()
+                                    .to_string();
+
+            let conditions = captures.name("default_value")
+                                .map(|m| AST::parse_condition_expression(m.as_str()));
+        
+            let start_line = code_text[..names_list_match.start()].matches('\n').count() + 1;
+            let end_line = code_text[.._full_match.end()].matches('\n').count() + 1;
+            let end_index = _full_match.end();
+        
+            for name_str in names_list_match.as_str().split(',') {
+                let name = name_str.trim().to_string();
+                if name.is_empty() { continue; }
+
+                let start_index = names_list_match.start();
+
+                let mut node = NodeData::new(
+                    name,
+                    "VariableDeclaration".to_string(),
+                    Some(start_line),
+                    Some(start_index),
+                    false,
+                );
+
+                node.end_line = Some(end_line);
+                node.end_index = Some(end_index);
+                node.base_type = Some(data_type_str.clone());
+                node.conditions = conditions.clone();
+
+                nodes.push(node);
+            }
+        }
+    }
+    Ok(nodes)
 }
 
 pub fn parse_condition_expression(condition_str: &str) -> ConditionExpr {
@@ -2129,6 +2608,11 @@ pub fn extract_all_nodes(code_text: &str) -> Result<Vec<NodeData>,ASTError> {
     nodes.extend(AST::extract_control_flow_nodes(code_text)?);
     nodes.extend(AST::extract_statement_nodes(code_text)?);
 
+    nodes.extend(AST::extract_variable_declarations(code_text)?);
+
+    nodes.extend(AST::extract_tasks(code_text)?); 
+    nodes.extend(AST::extract_entries(code_text)?);
+
     Ok(nodes)
 }
 
@@ -2162,7 +2646,7 @@ pub fn leggitree(nodo: &Expression, level: u32, prefix: &str) {
     }
 }
 
-// Add this helper function inside `impl AST { ... }` in lib.rs
+
 /// Finds the first node in the arena that matches a given name and type.
 pub fn find_node_by_name_and_type(&self, name: &str, node_type: &str) -> Option<NodeId> {
     self.root_id.descendants(&self.arena).find(|&node_id| {
@@ -2171,7 +2655,152 @@ pub fn find_node_by_name_and_type(&self, name: &str, node_type: &str) -> Option<
     })
 }
 
+/// Extracts `elsif` branches from Ada source code.
+///
+/// Parses `elsif ... then` statements, capturing their conditions and start position.
+/// These nodes are intended to be parented to a preceding `IfStatement` node
+/// during the AST build process.
+///
+/// # Examples
+/// ```
+/// use ADA_Standards::{NodeData, ASTError, AST, Expression};
+/// # fn main() -> Result<(), ASTError> {
+/// let code = r#"
+///   if X = 1 then
+///     null;
+///   elsif X = 2 then -- this is the one
+///     null;
+///   end if;
+/// "#;
+/// let c_code = AST::clean_code(code);
+/// let nodes = AST::extract_elsif_statements(&c_code)?;
+///
+/// assert_eq!(nodes.len(), 1);
+/// let elsif_node = &nodes[0];
+///
+/// assert_eq!(elsif_node.name, "ElsifStatement");
+/// assert_eq!(elsif_node.start_line, Some(4));
+///
+/// // Check the condition
+/// let conds = elsif_node.conditions.as_ref().ok_or(ASTError::NoMatchFound)?;
+/// if let Some(Expression::Binary(bin_expr)) = conds.albero.as_ref().map(|b| b.as_ref()) {
+///     assert_eq!(bin_expr.condstring.trim(), "X = 2");
+/// } else {
+///     panic!("Condition was not parsed as a binary expression");
+/// }
+/// Ok(())
+/// # }
+/// ```
+pub fn extract_elsif_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+    // This regex is identical to `extract_if_statements`, just with `elsif`
+    // We use the "skip-fail" pattern to ignore strings and comments.
+    let elsif_pattern = Reg::new(
+        r#"(?ims)\"[^\"]*\"|--.*$|^\s*(?P<elsifstat>\belsif\b)(?P<Condition>.*?)(?<!\band\b\s)then"#
+    ).map_err(|_| ASTError::RegexError)?;
+    
+    let mut nodes = Vec::new();
 
+    for mat in elsif_pattern.captures_iter(code_text) {
+        let captures = mat.map_err(|_| ASTError::RegexError)?;
+        
+        // Only proceed if we captured the "elsifstat" group
+        if let Some(elsif_keyword) = captures.name("elsifstat") {
+            let full_match = captures.get(0).ok_or(ASTError::MatchItemMissing)?;
+
+            let start_line = code_text[..elsif_keyword.start()].matches('\n').count() + 1;
+            let start_index = elsif_keyword.start();
+            
+            let condition_str = captures.name("Condition").unwrap().as_str().to_string();
+            let conditions = AST::parse_condition_expression(&condition_str);
+            
+            let mut node = NodeData::new(
+                "ElsifStatement".to_string(),
+                "ElsifStatement".to_string(),
+                Some(start_line),
+                Some(start_index),
+                false, // `elsif` is not a "body"
+            );
+            node.conditions = Some(conditions);
+            node.body_start = Some(full_match.end()); // Body starts after "then"
+
+            node.end_line = Some(code_text[..full_match.end()].matches('\n').count() + 1);
+            node.end_index = Some(full_match.end());
+            
+            nodes.push(node);
+        }
+    }
+
+    Ok(nodes)
+}
+
+/// Extracts `else` branches from Ada source code.
+///
+/// Parses `else` statements and records their start position.
+/// These nodes are intended to be parented to a preceding `IfStatement`
+/// or `CaseStatement` during the AST build process.
+///
+/// # Examples
+/// ```
+/// use ADA_Standards::{NodeData, ASTError, AST};
+/// # fn main() -> Result<(), ASTError> {
+/// let code = r#"
+///   if X = 1 then
+///     null;
+///   else -- this is the one
+///     null;
+///   end if;
+/// "#;
+/// let c_code = AST::clean_code(code);
+/// let nodes = AST::extract_else_statements(&c_code)?;
+///
+/// assert_eq!(nodes.len(), 1);
+/// let else_node = &nodes[0];
+///
+/// assert_eq!(else_node.name, "ElseStatement");
+/// assert_eq!(else_node.start_line, Some(4));
+/// assert!(else_node.conditions.is_none());
+/// Ok(())
+/// # }
+/// ```
+pub fn extract_else_statements(code_text: &str) -> Result<Vec<NodeData>, ASTError> {
+    // This "skip-fail" regex finds `else` that is not `or else`.
+    // The `^` anchor effectively prevents it from matching `or else`.
+    let else_pattern = Reg::new(
+        r#"(?ims)\"[^\"]*\"|--.*$|^\s*(?P<elsestat>\belse\b)"#
+    ).map_err(|_| ASTError::RegexError)?;
+    
+    let mut nodes = Vec::new();
+
+    for mat in else_pattern.captures_iter(code_text) {
+        let captures = mat.map_err(|_| ASTError::RegexError)?;
+        
+        // Only proceed if we captured the "elsestat" group
+        if let Some(else_keyword) = captures.name("elsestat") {
+            let full_match = captures.get(0).ok_or(ASTError::MatchItemMissing)?;
+
+            let start_line = code_text[..else_keyword.start()].matches('\n').count() + 1;
+            let start_index = else_keyword.start();
+            
+            let mut node = NodeData::new(
+                "ElseStatement".to_string(),
+                "ElseStatement".to_string(),
+                Some(start_line),
+                Some(start_index),
+                false,
+            );
+            
+            // Body starts right after the "else" keyword match
+            node.body_start = Some(full_match.end()); 
+
+            node.end_line = Some(start_line); // It's just the 'else' line
+            node.end_index = Some(full_match.end());
+            
+            nodes.push(node);
+        }
+    }
+
+    Ok(nodes)
+}
 
 }
 
