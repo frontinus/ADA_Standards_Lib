@@ -1,76 +1,109 @@
-ADA_Standards
-==============
-
-A library for analyzing Ada code to check if coding standards are respected in Rust.
-
-ADA_Standards is a Rust library designed for lightweight parsing and analysis of Ada source code. It uses regular expressions to extract structural information (packages, procedures, loops, etc.) and builds an Abstract Syntax Tree (AST) using indextree. This allows developers to programmatically inspect Ada code, enforce coding standards, and identify potential issues.
+# ADA_Standards
 
 [![Rust](https://github.com/frontinus/ADA_Standards_Lib/actions/workflows/rust.yml/badge.svg)](https://github.com/frontinus/ADA_Standards_Lib/actions/workflows/rust.yml)
 [![Latest version](https://img.shields.io/crates/v/ADA_Standards.svg)](https://crates.io/crates/ADA_Standards)
 [![Documentation](https://docs.rs/ADA_Standards/badge.svg)](https://docs.rs/ADA_Standards)
 [![License](https://img.shields.io/crates/l/ADA_Standards.svg)](https://github.com/frontinus/ada-analyzer#license)
 
+A lightweight, regex-based Ada parser in Rust. Extracts packages, procedures, types, and more into an Abstract Syntax Tree (AST) for analysis, linting, and standards-checking.
 
+## Features
 
+* **Code Cleaning:** Includes a `clean_code` utility to strip comments while correctly preserving strings and file structure.
+* **Comprehensive Extraction:** Parses dozens of Ada constructs, including:
+    * `package` (spec and body)
+    * `procedure` and `function` (spec, body, and `is new` instantiations)
+    * `task` (spec and body) and `entry` (spec and body)
+    * `type` and `subtype` (records, arrays, derived types, etc.)
+    * Representation clauses (`for ... use at ...` and `for ... use record`)
+    * `if` / `elsif` / `else` statements
+    * `case` statements
+    * `loop`, `while`, and `for` loops
+    * `declare` blocks
+    * Variable declarations (e.g., `A, B : Integer := 10;`)
+* **Intelligent Parsing:**
+    * Builds an `indextree`-based AST with correct parent-child hierarchy.
+    * Parses procedure/function parameters into a structured `Vec<ArgumentData>`.
+    * Parses `if`, `while`, and `exit when` conditions into a structured `ConditionExpr`.
+    * Populates `case` nodes with their `when` clauses.
 
-# Getting Started
+## Getting Started
 
-[ADA_Standards is available on crates.io](https://crates.io/crates/ADA_Standards).
-It is recommended to look there for the newest released version, as well as links to the newest builds of the docs.
+**ADA_Standards** is available on [crates.io](https://crates.io/crates/ADA_Standards). You can add it to your project with:
 
-At the point of the last update of this README, the latest published version could be used like this:
+```bash
+cargo add ADA_Standards
+```
 
-Add the following dependency to your Cargo manifest...
+Or, add the following to your Cargo.toml, replacing 1.1.1 with the latest version:
 
 ```toml
 [dependencies]
-ADA_Standards = "1.1.0" 
+ADA_Standards = "1.1.1" 
 ```
 
 ...and see the [docs](https://docs.rs/ADA_Standards) for how to use it.
 
-# Example
+## Example
 
 ```rust
-use ADA_Standards::{AST, NodeData, Expression, ConditionExpr, UnaryExpression, BinaryExpression, MembershipExpression, Unaries, Binaries, Memberships, ASTError};
+use ADA_Standards::{AST, ASTError};
 use std::fs;
 use std::path::Path;
-use std::env;
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Read Ada source file
+    let file_path = "path/to/your/ada_file.adb"; // Try it with blop.ada!
+    let code_text = fs::read_to_string(file_path)?;
 
-let args: Vec<String> = env::args().collect();
+    // 2. Clean the code (removes comments, preserves strings and layout)
+    let cleaned_code = AST::clean_code(&code_text);
 
+    // 3. Extract all nodes from the code
+    let nodes = AST::extract_all_nodes(&cleaned_code)?;
 
-let file_path = &args[1];
-let code_text = fs::read_to_string(file_path)?;
-let cleaned_code = AST::clean_code(code_text);
-let mut node_data_vec: Vec<NodeData> = Vec::new();
-node_data_vec =extract_statement_nodes(cleaned_code,node_data_vec);
-ast = AST::new(node_data_vec);
-ast.build();
-ast.print_tree();
+    // 4. Create a new AST and build the tree structure
+    let mut ast = AST::new(nodes);
+    ast.build(&cleaned_code)?; // This runs the end-of-block association
 
-let conditions = AST::parse_condition_expression(cleaned_code);
+    // 5. Run post-processing to populate details
+    ast.populate_cases(&cleaned_code)?;
+    ast.populate_simple_loop_conditions(&cleaned_code)?;
+
+    // 6. Analyze the tree!
+    println!("Successfully built AST!");
+    ast.print_tree();
+
+    // Example: Find the 'estocazz' procedure and list its direct children
+    if let Some(estocazz_id) = ast.find_node_by_name_and_type("estocazz", "ProcedureNode") {
+        println!("\nChildren of 'estocazz':");
+        for child_id in estocazz_id.children(ast.arena()) {
+            let child_node = ast.arena().get(child_id).unwrap().get();
+            println!(
+                "  - {} (Type: {}, Line: {:?})",
+                child_node.name,
+                child_node.node_type,
+                child_node.start_line
+            );
+        }
+    }
+    
+    Ok(())
+}
 
 ```
 
-
-
 ## License
 
-Licensed under 
-
+Licensed under
 
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
-
 
 ### Contribution
 
 You are free to contribute by forking and creating a pull request !
 
-
 ### Author
-
 
 My name is Francesco Abate, I'm a computer engineer with experience in the fields of  software and embedded programming, cybersecurity and AI, I am currently working on my mastery of the Rust language and seeking a job in that field!
 
