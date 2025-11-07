@@ -39,7 +39,7 @@ Or, add the following to your Cargo.toml, replacing 1.1.1 with the latest versio
 
 ```toml
 [dependencies]
-ADA_Standards = "1.1.1" 
+ADA_Standards = "1.2.0" 
 ```
 
 ...and see the [docs](https://docs.rs/ADA_Standards) for how to use it.
@@ -74,9 +74,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Successfully built AST!");
     ast.print_tree();
 
-    // Example: Find the 'estocazz' procedure and list its direct children
-    if let Some(estocazz_id) = ast.find_node_by_name_and_type("estocazz", "ProcedureNode") {
-        println!("\nChildren of 'estocazz':");
+    // Example: Find the 'myproc' procedure and list its direct children
+    if let Some(estocazz_id) = ast.find_node_by_name_and_type("myproc", "ProcedureNode") {
+        println!("\nChildren of 'myproc':");
         for child_id in estocazz_id.children(ast.arena()) {
             let child_node = ast.arena().get(child_id).unwrap().get();
             println!(
