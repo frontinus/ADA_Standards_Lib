@@ -4,57 +4,63 @@
 //! [![crates.io](https://img.shields.io/crates/v/ADA_Standards.svg)](https://crates.io/crates/ADA_Standards)
 //! [![docs.rs](https://docs.rs/ADA_Standards/badge.svg)](https://docs.rs/ADA_Standards)
 //!
-//! A library for parsing and analyzing Ada source code to enforce coding standards and identify potential issues.
-//!
-//! This library provides a way to programmatically inspect the structure and content of Ada files,
-//! allowing for the creation of custom rules to verify specific coding conventions.
+//! A comprehensive library for parsing and analyzing Ada source code to enforce coding standards
+//! and identify potential issues through Abstract Syntax Tree (AST) analysis.
 //!
 //! ## Overview
 //!
-//! The `ADA_Standards` library uses regular expressions to perform a lightweight parsing of Ada code
-//! and builds an Abstract Syntax Tree (AST) represented by the `indextree` crate. This AST can then
-//! be traversed to analyze the code based on user-defined rules.
+//! The `ADA_Standards` library provides a lightweight, regex-based approach to parsing Ada code.
+//! It extracts language constructs (packages, procedures, types, control flow, etc.) and builds
+//! a hierarchical tree structure that can be traversed and analyzed programmatically.
 //!
-//! ## Modules
+//! ## Key Components
 //!
-//! * `text_format`: Provides constants for ANSI escape codes to format output in the console.
+//! - **NodeData**: Represents individual Ada constructs with metadata (location, type, parameters, etc.)
+//! - **AST**: The main Abstract Syntax Tree structure with methods for building and querying
+//! - **Expression Types**: Unary, Binary, Membership, and Condition expressions for parsing logic
+//! - **ArgumentData**: Structured representation of procedure/function parameters
 //!
-//! ## Enums
+//! ## Workflow
 //!
-//! The library defines several enums to represent different elements of Ada expressions:
+//! 1. **Clean Code**: Remove comments and normalize strings while preserving structure
+//! 2. **Extract Nodes**: Use regex patterns to identify all Ada constructs
+//! 3. **Build Tree**: Establish parent-child relationships based on code structure
+//! 4. **Post-Process**: Populate derived data like case alternatives and loop conditions
+//! 5. **Analyze**: Traverse the tree to enforce standards or generate metrics
 //!
-//! * `Unaries`: Represents unary operators like `not`.
-//! * `Memberships`: Represents membership operators like `in` and `not in`.
-//! * `Binaries`: Represents binary operators like `and`, `or`, `and then`, `or else`, etc.
+//! ## Example
 //!
-//! ## Structs
+//! ```rust
+//! use ADA_Standards::{AST, ASTError};
+//! use std::fs;
 //!
-//! Key data structures used by the library:
-//!
-//! * `NodeData`: Stores information about a node in the AST, including its name, type, line numbers, and specific data related to the Ada construct it represents (e.g., conditions for an `if` statement, arguments for a procedure).
-//! * `UnaryExpression`, `BinaryExpression`, `MembershipExpression`, `ConditionExpr`: Represent different types of expressions in Ada code.
-//! * `ArgumentData`: Stores information about procedure or function arguments.
-//! * `ReturnKeywordData`: Stores information about the return type of a function.
-//! * `AST`: Represents the Abstract Syntax Tree of the Ada code. It provides methods to build the tree from a list of `NodeData` and traverse it.
-//!
-//! ## Usage
-//!
-//! To use the `ADA_Standards` library, you would typically:
-//!
-//! 1.  Read the content of an Ada file as a string.
-//! 2.  Use the library's functions (like `extract_packages`, `extract_procedures_functions`, etc.) to parse the code and create a `Vec<NodeData>`.
-//! 3.  Create an `AST` instance from the `Vec<NodeData>`.
-//! 4.  Define your own analysis rules as functions that take an `&AST`
-//! 7.  Process the list of nodes and various informations in the AST to try to check if your coding standards are respected
-//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let code = fs::read_to_string("blop.ada")?;
+//! let cleaned = AST::clean_code(&code);
+//! let nodes = AST::extract_all_nodes(&cleaned)?;
 //! 
-///!
+//! let mut ast = AST::new(nodes);
+//! ast.build(&cleaned)?;
+//! ast.populate_cases(&cleaned)?;
+//! 
+//! // Find and analyze a specific procedure
+//! if let Some(proc_id) = ast.find_node_by_name_and_type("Main", "ProcedureNode") {
+//!     let proc = ast.arena().get(proc_id).unwrap().get();
+//!     println!("Found procedure at line {}", proc.start_line.unwrap());
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use indextree::{Arena, NodeId};
 use regex::Regex;
 use fancy_regex::Regex as Reg;
 use lazy_static::lazy_static;
 
+/// ANSI color codes for terminal output formatting.
+///
+/// These constants are used throughout the library for colorizing diagnostic
+/// output when printing node information or tree structures.
 #[allow(dead_code)]
 mod text_format {
     pub const ENDC: &str = "\033[0m";
@@ -83,28 +89,39 @@ mod text_format {
 
 /// Represents errors that can occur during AST construction or analysis.
 ///
+/// This enum provides specific error types for different failure scenarios
+/// encountered while parsing Ada code or building the tree structure.
+///
 /// # Variants
-/// - `RegexError`: Failure to compile a regex pattern.
-/// - `NodeNotInArena(String)`: Attempt to access an invalid node ID.
-/// - `InvalidNodeData(String)`: Node data is missing required fields (e.g., `body_start`).
-/// - `StartNodeNotFound`: No matching start node found for an `end` statement.
-/// - `NodeIdMissing(String)`: A required node ID is missing during processing.
-/// - `NoMatchFound`: No match found in the provided text.
-/// - `TreeBuildError`: General error during AST tree building.
-/// - `MatchItemMissing`: A required match item was missing.
-/// - `InvalidCapture`: A required capture group was missing.
+/// - `RegexError`: Failure to compile a regex pattern
+/// - `NodeNotInArena(String)`: Attempt to access a node ID that doesn't exist in the arena
+/// - `InvalidNodeData(String)`: Node data is missing required fields
+/// - `StartNodeNotFound`: No matching start node found for an `end` statement
+/// - `NodeIdMissing(String)`: A required node ID is missing during processing
+/// - `NoMatchFound`: No regex match found in the provided text
+/// - `TreeBuildError`: General error during AST tree building
+/// - `MatchItemMissing`: A required regex match item was missing
+/// - `InvalidCapture`: A required capture group was missing from a regex match
 #[derive(Debug)]
 pub enum ASTError {
+    /// A required regex match item was missing
     MatchItemMissing,
+    /// A required capture group was missing from a regex match
     InvalidCapture,
+    /// General error during AST tree building
     TreeBuildError,
+    /// No regex match found in the provided text
     NoMatchFound,
+    /// A required node ID is missing during processing
     NodeIdMissing(String),
+    /// No matching start node found for an `end` statement during tree building
     StartNodeNotFound,
+    /// Attempt to access a node ID that doesn't exist in the arena
     NodeNotInArena(String),
+    /// Failure to compile a regex pattern
     RegexError,
-    // Add other variants as needed
 }
+
 
 
 impl std::error::Error for ASTError {}
@@ -125,148 +142,262 @@ impl std::fmt::Display for ASTError {
 }
 
 
-/// Represents Ada unary operators.
+
+/// Represents Ada unary operators in conditional expressions.
+///
+/// Currently only supports the `not` operator, but structured as an enum
+/// to allow for future expansion.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Unaries {
+    /// The logical NOT operator
     NOT,
 }
 
-/// Represents Ada membership operators.
+/// Represents Ada membership test operators.
+///
+/// These operators test whether a value belongs to a range or type.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Memberships {
+    /// The "not in" membership test (true if value NOT in range)
     NOT_IN,
+    /// The "in" membership test (true if value in range)
     IN,
 }
 
-/// Represents Ada binary operators.
+/// Represents Ada binary operators in conditional expressions.
+///
+/// Includes logical operators, comparison operators, and short-circuit variants.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Binaries {
+    /// Logical AND
     AND,
+    /// Logical OR
     OR,
+    /// Short-circuit AND (right side not evaluated if left is false)
     AND_THEN,
+    /// Short-circuit OR (right side not evaluated if left is true)
     OR_ELSE,
+    /// Exclusive OR
     XOR,
+    /// Less than comparison
     INFERIOR,
+    /// Greater than comparison
     SUPERIOR,
+    /// Less than or equal comparison
     INFERIOR_OR_EQUAL,
+    /// Greater than or equal comparison
     SUPERIOR_OR_EQUAL,
+    /// Equality comparison
     EQUAL,
+    /// Inequality comparison
     UNEQUAL,
 }
 
-// Define NodeData struct to hold node information, similar to BaseNode in Python
-#[derive(Debug,Clone)] // For printing and debugging, remove later if not needed
+/// Represents different types of expressions in Ada conditional logic.
+///
+/// This enum is used to build expression trees from parsed conditions,
+/// supporting nested operations with proper precedence handling.
+#[derive(Debug, Clone)]
 pub enum Expression {
+    /// A unary operation (e.g., `not Found`)
     Unary(UnaryExpression),
+    /// A binary operation (e.g., `X > 10`, `A and B`)
     Binary(BinaryExpression),
+    /// A membership test (e.g., `X in 1..10`)
     Membership(MembershipExpression),
+    /// A complete condition with both flat list and tree representation
     Condition(ConditionExpr),
-    Literal(String), // Added to represent basic expressions as literals
+    /// A literal value or identifier that cannot be further decomposed
+    Literal(String),
 }
 
-/// Represents a unary operation (e.g., `not Found`).
+/// Represents a unary operation in an expression tree.
+///
+/// # Fields
+/// - `op`: The unary operator being applied
+/// - `operand`: The expression being operated on
+/// - `condstring`: The original string representation of this expression
 #[derive(Debug, Clone)]
 pub struct UnaryExpression {
-    pub op: Unaries, // Changed to use Unaries enum
-    pub operand: Box<Expression>, // Changed to Box<Expression>
+    /// The unary operator (e.g., NOT)
+    pub op: Unaries,
+    /// The operand being operated on (boxed for recursive structure)
+    pub operand: Box<Expression>,
+    /// Original string representation of this expression
     pub condstring: String,
 }
 
-/// Represents a binary operation (e.g., `A + B`, `X > Y`).
+/// Represents a binary operation in an expression tree.
+///
+/// Binary operations include logical operators (and, or) and comparison
+/// operators (<, >, =, etc.). The tree structure allows for proper
+/// precedence handling during parsing.
+///
+/// # Fields
+/// - `op`: The binary operator being applied
+/// - `left`: The left operand expression
+/// - `right`: The right operand expression
+/// - `condstring`: The original string representation of this expression
 #[derive(Debug, Clone)]
 pub struct BinaryExpression {
-    pub op: Binaries, // Changed to use Binaries enum
-    pub left: Box<Expression>, // Changed to Box<Expression>
-    pub right: Box<Expression>, // Changed to Box<Expression>
+    /// The binary operator (e.g., AND, SUPERIOR)
+    pub op: Binaries,
+    /// The left operand (boxed for recursive structure)
+    pub left: Box<Expression>,
+    /// The right operand (boxed for recursive structure)
+    pub right: Box<Expression>,
+    /// Original string representation of this expression
     pub condstring: String,
 }
 
-/// Represents a membership test (e.g., `X in 1 .. 10`).
+/// Represents a membership test expression.
+///
+/// Membership tests check if a value belongs to a range or type,
+/// using the `in` or `not in` operators.
+///
+/// # Fields
+/// - `op`: The membership operator (IN or NOT_IN)
+/// - `left`: The value being tested
+/// - `right`: The range or type being tested against
+/// - `condstring`: The original string representation
 #[derive(Debug, Clone)]
 pub struct MembershipExpression {
-    pub op: Memberships, // Changed to use Memberships enum
-    pub left: Box<Expression>, // Changed to Box<Expression>
-    pub right: Box<Expression>, // Changed to Box<Expression>
+    /// The membership operator (IN or NOT_IN)
+    pub op: Memberships,
+    /// The value being tested (boxed for recursive structure)
+    pub left: Box<Expression>,
+    /// The range or type being tested against (boxed for recursive structure)
+    pub right: Box<Expression>,
+    /// Original string representation of this expression
     pub condstring: String,
 }
 
-/// Represents a parsed condition, containing both a flat list and a tree (`albero`).
+/// Represents a parsed conditional expression.
+///
+/// Contains both a flat list of all sub-expressions (useful for iteration)
+/// and a tree representation (useful for evaluation and precedence analysis).
+///
+/// # Fields
+/// - `list`: Flat list of all expressions found during parsing
+/// - `albero`: Root of the expression tree (Italian for "tree")
 #[derive(Debug, Clone)]
 pub struct ConditionExpr {
-    pub list: Vec<Expression>, // Changed to Expression enum
-    pub albero : Option<Box<Expression>>,
+    /// Flat list of all expressions (useful for linear traversal)
+    pub list: Vec<Expression>,
+    /// Root of the expression tree (useful for hierarchical analysis)
+    pub albero: Option<Box<Expression>>,
 }
 
-/// Represents a single parsed procedure, function, or entry parameter.
-#[derive(Debug, Clone)]
-pub struct ArgumentData {
-    /// The name of the parameter (e.g., `Param`).
-    pub name: String,
-    /// The mode of the parameter ("in", "out", "in out").
-    pub mode: String,
-    /// The declared type of the parameter (e.g., `Integer`, `MyType`).
-    pub data_type: String,
-    /// An optional default value (e.g., `True`, `0.0`).
-    pub default_value: Option<String>,
-}
-
-/// Represents the return type of a function (e.g., `return Integer`).
-#[derive(Debug, Clone)]
-pub struct ReturnKeywordData {
-    pub data_type: Option<String>,
-}
-
-/// Represents a found `end ...;` statement, used for tree building.
-#[derive(Debug, Clone)]
-pub struct EndStatement {
-    word: String, // What follows "end", e.g., "loop", "if", or a name like "Proc"
-    index: usize,
-    line: usize,
-    end_index: usize,
-}
-
-const UNNAMED_END_KEYWORDS: [&str; 4] = ["loop", "if", "case", "record"];
-
-// Make sure this is the definition you are using
-enum ParseEvent {
-    StartNodeId { node_id: NodeId, index: usize }, // Use this variant
-    End { word: String, index: usize, line: usize, end_index: usize },
-}
-
-/// Creates a new `NodeData` instance with specified attributes.
+/// Represents a single procedure, function, or entry parameter.
 ///
-/// Initializes a node with the given name, type, start position, and body status, setting
-/// other fields to `None`. This constructor is used during node extraction (e.g., for packages,
-/// procedures, or case statements) to capture essential metadata before further processing.
-///
-/// # Parameters
-/// - `name`: The identifier or name of the Ada construct (e.g., "MyPackage").
-/// - `node_type`: The type of construct (e.g., "PackageNode", "CaseStatement").
-/// - `start_line`: The line number where the construct begins, if known.
-/// - `start_index`: The character index where the construct begins, if known.
-/// - `is_body`: Whether the construct is a body (e.g., `package body`) or specification.
-///
-/// # Returns
-/// A `NodeData` instance with initialized fields and others set to `None`.
+/// This struct captures all relevant information about a formal parameter,
+/// including its name, mode (in/out/in out), type, and optional default value.
 ///
 /// # Examples
 /// ```
+/// use ADA_Standards::ArgumentData;
+/// 
+/// let arg = ArgumentData {
+///     name: "Count".to_string(),
+///     mode: "in out".to_string(),
+///     data_type: "Integer".to_string(),
+///     default_value: Some("0".to_string()),
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct ArgumentData {
+    /// The parameter name (e.g., "Count", "Buffer")
+    pub name: String,
+    /// The parameter mode: "in", "out", or "in out"
+    pub mode: String,
+    /// The declared type (e.g., "Integer", "String", "My_Type")
+    pub data_type: String,
+    /// Optional default value as a string (e.g., "0", "True", "null")
+    pub default_value: Option<String>,
+}
+
+/// Represents the return type of a function.
 ///
+/// This struct captures the return type information from a function declaration.
+/// The type is optional to handle edge cases in parsing.
+#[derive(Debug, Clone)]
+pub struct ReturnKeywordData {
+    /// The return type (e.g., "Integer", "Boolean", "My_Type")
+    pub data_type: Option<String>,
+}
+
+/// Internal structure representing a found `end` statement.
+///
+/// Used during tree building to match `end` statements with their
+/// corresponding opening constructs (package, procedure, loop, etc.).
+///
+/// # Fields
+/// - `word`: What follows "end" (e.g., "loop", "if", or a name like "My_Proc")
+/// - `index`: Character position where "end" starts
+/// - `line`: Line number where "end" appears
+/// - `end_index`: Character position where the statement ends (after semicolon)
+#[derive(Debug, Clone)]
+pub struct EndStatement {
+    /// What follows "end" (keyword or name)
+    pub word: String,
+    /// Character index of the "end" keyword
+    pub index: usize,
+    /// Line number of the "end" statement
+    pub line: usize,
+    /// Character index after the semicolon
+    pub end_index: usize,
+}
+
+/// Keywords that appear in unnamed `end` statements.
+///
+/// These constructs end with "end <keyword>;" rather than "end <name>;".
+/// For example: "end loop;", "end if;", "end case;", "end record;"
+const UNNAMED_END_KEYWORDS: [&str; 4] = ["loop", "if", "case", "record"];
+
+/// Internal enum for tracking parse events during tree building.
+///
+/// Represents either the start of a node or an `end` statement,
+/// allowing the builder to maintain a stack-based hierarchy.
+enum ParseEvent {
+    /// A node starting at the given index
+    StartNodeId { node_id: NodeId, index: usize },
+    /// An end statement with its details
+    End { word: String, index: usize, line: usize, end_index: usize },
+}
+
+/// The core data structure representing an Ada construct in the AST.
+///
+/// `NodeData` is designed to accommodate many different types of Ada constructs
+/// (packages, procedures, types, loops, etc.) through a flexible field structure.
+/// Not all fields are relevant for all node types.
+///
+/// # Common Fields (used by most nodes)
+/// - `name`, `node_type`: Identity and classification
+/// - `start_line`, `end_line`: Source location
+/// - `start_index`, `end_index`: Character positions
+/// - `is_body`: Whether it's a body vs. specification
+///
+/// # Specialized Fields
+/// Different node types use different subsets of fields:
+/// - **Procedures/Functions**: `arguments`, `return_type`, `pkg_name`
+/// - **Types**: `type_kind`, `base_type`, `tuple_values`
+/// - **Control Flow**: `conditions`, `iterator`, `range_start`, `switch_expression`
+/// - **Case Statements**: `switch_expression`, `cases`
+///
+/// # Examples
+/// ```
 /// use ADA_Standards::NodeData;
-/// let node = NodeData::new(
-///     "MyProcedure".to_string(),
+/// 
+/// let proc_node = NodeData::new(
+///     "Calculate".to_string(),
 ///     "ProcedureNode".to_string(),
 ///     Some(10),
-///     Some(15),
-///     false,
+///     Some(150),
+///     true, // is_body
 /// );
-/// assert_eq!(node.name, "MyProcedure");
-/// assert_eq!(node.is_body, Some(false));
-/// assert_eq!(node.start_line, Some(10));
 /// ```
-/// 
 #[derive(Debug,Clone)] 
 pub struct NodeData {
     // --- Common Fields (Used by almost all nodes) ---
@@ -287,15 +418,15 @@ pub struct NodeData {
     pub column: Option<usize>,
     /// The character index for the start of the node's body (e.g., after `is` or `then`).
     pub body_start: Option<usize>,
-    /// A pointer to the parent node in the AST (populated during `build`).
-    pub parent : Option<Box<NodeData>>, // Note: This is complex and may not be what you intend.
-                                       // `indextree` handles parentage, this field may be redundant.
+    /// Reference to parent node (Note: indextree handles actual parentage)
+    pub parent : Option<Box<NodeData>>, 
+                                       
 
     // --- Package/Procedure/Function/Task/Entry Fields ---
     
     /// `true` if the node is a `body` (e.g., `package body`), `false` for a spec.
     pub is_body: Option<bool>,
-    /// For nested procedures/packages, this field *may* be populated. (Consider removing if unused)
+    /// For nested procedures/packages, this field *may* be populated. 
     pub pkg_name: Option<String>,
     /// The category of declaration (e.g., "generic", "separate" for packages,
     /// "type", "subtype", "for" for type declarations).
@@ -344,17 +475,38 @@ pub struct NodeData {
     pub cases: Option<Vec<String>>,
 }
 
-/// The core data structure for every node in the AST.
-///
-/// This struct holds all common information (name, type, location) and
-/// specific data for different Ada constructs (e.g., `conditions` for an `IfStatement`,
-/// `arguments` for a `ProcedureNode`).
-impl NodeData {
 
+impl NodeData {
     /// Creates a new `NodeData` instance with default values.
     ///
     /// Initializes a node with the given name, type, start position, and body status,
-    /// setting all other specific fields to `None`.
+    /// setting all other specific fields to `None`. This is the primary constructor
+    /// used by all extraction functions.
+    ///
+    /// # Parameters
+    /// - `name`: The identifier of the construct (e.g., "MyPackage")
+    /// - `node_type`: The type classification (e.g., "PackageNode")
+    /// - `start_line`: Line number where the construct begins
+    /// - `start_index`: Character index where the construct begins
+    /// - `is_body`: Whether this is a body (true) or specification (false)
+    ///
+    /// # Returns
+    /// A `NodeData` instance with initialized common fields and all specialized fields set to `None`.
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::NodeData;
+    /// 
+    /// let node = NodeData::new(
+    ///     "My_Procedure".to_string(),
+    ///     "ProcedureNode".to_string(),
+    ///     Some(10),
+    ///     Some(150),
+    ///     false, // is a specification
+    /// );
+    /// assert_eq!(node.name, "My_Procedure");
+    /// assert_eq!(node.is_body, Some(false));
+    /// ```
     pub fn new(name: String, node_type: String, start_line: Option<usize>, start_index: Option<usize>,is_body: bool) -> Self {
         NodeData {
             
@@ -387,21 +539,37 @@ impl NodeData {
         }
     }
 
-/// Prints detailed information about the node in a color-coded format.
-///
-/// Displays all relevant fields of the node, such as name, type, position, conditions, and cases,
-/// using color formatting to distinguish field types (e.g., blue for metadata, green for conditions).
-/// This method is primarily used for debugging or inspecting the AST during development or analysis.
-/// Optional fields are only printed if they contain values, and nested structures (e.g., arguments,
-/// conditions) are formatted with indentation for clarity.
-///
-/// # Notes
-/// - The output uses ANSI color codes from the `text_format` module (e.g., `BLUE`, `GREEN`).
-/// - Complex fields like `conditions` and `arguments` are printed with nested details.
-/// - The `parent` field, if present, is included to show hierarchical relationships.
-/// - This method is I/O-bound and may be slow for large ASTs; consider using a verbosity flag for production.
-///
-
+    /// Prints detailed, color-coded information about the node to stdout.
+    ///
+    /// This method displays all non-None fields of the node using ANSI color codes
+    /// for better readability. It's primarily intended for debugging and development,
+    /// showing the complete state of a node including nested structures like
+    /// arguments and conditions.
+    ///
+    /// # Output Format
+    /// - Common fields (name, type, lines) are printed in blue
+    /// - Arguments are printed in yellow with green headers
+    /// - Conditions are printed in green with yellow details
+    /// - Each nested structure is indented for clarity
+    ///
+    /// # Notes
+    /// - Uses ANSI escape codes, so output may not render properly on all terminals
+    /// - For production use, consider logging instead of printing
+    /// - Large condition trees may produce verbose output
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use ADA_Standards::NodeData;
+    /// 
+    /// let node = NodeData::new(
+    ///     "Test".to_string(),
+    ///     "ProcedureNode".to_string(),
+    ///     Some(1),
+    ///     Some(0),
+    ///     true
+    /// );
+    /// node.print_info(); // Prints colored output to stdout
+    /// ```
     pub fn print_info(&self) {
         println!("{}  Category: {} {}{}, ", text_format::BLUE, text_format::ENDC, self.node_type, ", ");
         println!("{}  Name: {} {}{}", text_format::BLUE, text_format::ENDC, self.name, ", ");
@@ -506,22 +674,42 @@ impl NodeData {
 
 /// Represents the Abstract Syntax Tree (AST) for Ada source code.
 ///
-/// Manages a collection of `NodeData` instances in an `indextree::Arena`, with a root node
-/// anchoring the tree. Provides methods to extract nodes, build the tree, and analyze Ada code
-/// for coding standard enforcement.
+/// The `AST` struct is the main interface for parsing and analyzing Ada code.
+/// It manages a collection of `NodeData` instances in an `indextree::Arena`,
+/// providing methods to extract nodes, build hierarchical relationships,
+/// and query the resulting tree.
 ///
 /// # Fields
-/// - `arena`: The `indextree` arena holding all nodes.
-/// - `root_id`: The ID of the synthetic root node.
-/// - `nodes_data`: Temporary storage for extracted nodes before building.
+/// - `arena`: The indextree arena that owns all node data
+/// - `root_id`: ID of the synthetic root node (parent of all top-level constructs)
+/// - `nodes_data`: Pre-build list of extracted nodes
+/// - `node_ids`: Mapping from nodes_data indices to arena NodeIds
+///
+/// # Workflow
+/// 1. Create with `new()` from a vector of extracted nodes
+/// 2. Call `build()` to establish parent-child relationships
+/// 3. Call post-processing methods like `populate_cases()`
+/// 4. Query and traverse the tree using `find_node_by_name_and_type()` or arena methods
 ///
 /// # Examples
 /// ```
 /// use ADA_Standards::{AST, NodeData};
-/// let nodes = vec![NodeData::new("Root".to_string(), "RootNode".to_string(), None, None, false)];
-/// let ast = AST::new(nodes);
-/// ```
- 
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let code = "package Test is\nend Test;";
+/// let cleaned = AST::clean_code(code);
+/// let nodes = AST::extract_all_nodes(&cleaned)?;
+/// 
+/// let mut ast = AST::new(nodes);
+/// ast.build(&cleaned)?;
+/// 
+/// // Traverse the tree
+/// for node_id in ast.root_id().descendants(ast.arena()) {
+///     let node = ast.arena().get(node_id).unwrap().get();
+///     println!("{}", node.name);
+/// }
+/// # Ok(())
+/// # }
+/// ``` 
 pub struct AST {
     /// The `indextree` arena that owns all `NodeData` in the tree.
     pub arena: Arena<NodeData>,
@@ -657,13 +845,48 @@ impl AST {
 
 
 
-    /// Builds the complete AST hierarchy.
+    /// Builds the complete AST hierarchy from extracted nodes.
     ///
-    /// This is the core logic function. It performs the following steps:
-    /// 1. Sorts the raw `nodes_data` by their start index.
-    /// 2. Populates the `arena` with all nodes.
-    /// 3. Calls `associate_end_lines_in_arena` to match `end` statements and set `end_line`.
-    /// 4. Builds the parent-child tree structure in the arena.
+    /// This is the core logic that transforms a flat list of nodes into a proper
+    /// tree structure. It performs several critical steps:
+    ///
+    /// # Steps
+    /// 1. **Sort nodes** by start index (ensures chronological processing)
+    /// 2. **Populate arena** with all nodes
+    /// 3. **Associate end lines** by matching `end` statements to opening blocks
+    /// 4. **Build tree structure** using a stack-based algorithm
+    ///
+    /// # Algorithm
+    /// The tree building uses a stack to track the current nesting context:
+    /// - Start with root on the stack
+    /// - For each node (in order):
+    ///   - Pop from stack any parents that have ended before this node starts
+    ///   - Attach current node to the top of the stack (its parent)
+    ///   - Push current node onto stack if it's a container (has no end_line initially)
+    ///
+    /// # Parameters
+    /// - `code_text`: The cleaned source code (used for end line association)
+    ///
+    /// # Returns
+    /// - `Ok(())` if the tree was built successfully
+    /// - `Err(ASTError)` if there was a problem during construction
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::AST;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let code = "package P is\n  procedure Q;\nend P;";
+    /// let cleaned = AST::clean_code(code);
+    /// let nodes = AST::extract_all_nodes(&cleaned)?;
+    /// 
+    /// let mut ast = AST::new(nodes);
+    /// ast.build(&cleaned)?; // Builds the tree
+    /// 
+    /// // Now we can traverse it
+    /// assert!(ast.root_id().children(ast.arena()).count() > 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn build(&mut self, code_text: &str) -> Result<(), ASTError> {
         // 1. Sort nodes_data by start index FIRST.
         self.nodes_data.sort_by_key(|n| n.start_index.unwrap_or(0));
@@ -737,12 +960,63 @@ impl AST {
         Ok(())
     }
 
-    /// Prints a colorized, human-readable representation of the AST to stdout.       
+    /// Prints a colorized, human-readable representation of the AST to stdout.
+    ///
+    /// This method traverses the tree and prints each node with indentation
+    /// to show nesting levels. It uses ANSI color codes for better readability:
+    /// - Red for node types
+    /// - Blue for node names
+    ///
+    /// # Output Format
+    /// ```text
+    /// RootNode - root
+    ///   PackageNode - MyPackage (start_line: 1, end_line: 10)
+    ///     ProcedureNode - DoWork (start_line: 2, end_line: 5)
+    ///       IfStatement - IfStatement (start_line: 3, end_line: 4)
+    /// ```
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use ADA_Standards::AST;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let code = "package P is\nend P;";
+    /// let cleaned = AST::clean_code(code);
+    /// let nodes = AST::extract_all_nodes(&cleaned)?;
+    /// let mut ast = AST::new(nodes);
+    /// ast.build(&cleaned)?;
+    /// 
+    /// ast.print_tree(); // Prints colorized tree to stdout
+    /// # Ok(())
+    /// # }
+    /// ```      
     pub fn print_tree(&self) {
             println!("{}", self.output_tree());
     }
 
-    /// Returns a `String` containing a human-readable representation of the AST.
+    /// Returns a string representation of the AST tree structure.
+    ///
+    /// Similar to `print_tree()`, but returns the string instead of printing.
+    /// Useful for logging, testing, or further processing.
+    ///
+    /// # Returns
+    /// A multi-line string with the complete tree structure, including
+    /// node types, names, and line numbers (where available).
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::AST;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let code = "package P is\nend P;";
+    /// let cleaned = AST::clean_code(code);
+    /// let nodes = AST::extract_all_nodes(&cleaned)?;
+    /// let mut ast = AST::new(nodes);
+    /// ast.build(&cleaned)?;
+    /// 
+    /// let tree_string = ast.output_tree();
+    /// assert!(tree_string.contains("PackageNode"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn output_tree(&self) -> String {
             let mut output = String::new();
             for node_id in self.root_id.descendants(&self.arena) {
@@ -769,10 +1043,29 @@ impl AST {
             output
     }
 
-    /// Prints detailed info for all nodes in the *original* `nodes_data` list.
+    /// Prints detailed info for all nodes in the original `nodes_data` list.
     ///
-    /// Note: This iterates over `self.nodes_data`, not the final tree in `self.arena`.
-    /// Its usefulness may be limited after `build` is called.
+    /// **Note**: This iterates over `self.nodes_data`, not the final tree in `self.arena`.
+    /// It's primarily useful for debugging the extraction phase before building.
+    /// After `build()` is called, the arena should be considered the source of truth.
+    ///
+    /// # Returns
+    /// - `Ok(())` if all nodes were printed successfully
+    /// - `Err(ASTError::NodeNotInArena)` if a node ID is invalid
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use ADA_Standards::AST;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let code = "package P is\nend P;";
+    /// let cleaned = AST::clean_code(code);
+    /// let nodes = AST::extract_all_nodes(&cleaned)?;
+    /// let ast = AST::new(nodes);
+    /// 
+    /// ast.print_nodes_info()?; // Prints detailed info for each extracted node
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn print_nodes_info(&self) -> Result<(), ASTError> {
         for index in 0..self.nodes_data.len() {
             if let Some(node_id) = self.node_ids[index] {
@@ -784,13 +1077,33 @@ impl AST {
         Ok(())
     }
 
-    /// Helper for `associate_end_lines_in_arena`.
+    /// Returns the expected closing keyword for a given node type.
     ///
-    /// Returns the expected closing keyword for a given `node_type`.
-    /// - `Some("name")`: Expects `end <name>;` (e.g., PackageNode)
-    /// - `Some("loop")`: Expects `end loop;` (e.g., ForLoop)
-    /// - `Some("")`: Expects `end;` (e.g., DeclareNode)
-    /// - `None`: Node is not a container and has no end (e.g., VariableDeclaration)
+    /// This helper method is used during end line association to determine
+    /// what kind of `end` statement should close a particular construct.
+    ///
+    /// # Parameters
+    /// - `node_type`: The type of node (e.g., "PackageNode", "IfStatement")
+    ///
+    /// # Returns
+    /// - `Some("name")`: Expects `end <name>;` (e.g., procedures, packages)
+    /// - `Some("loop")`: Expects `end loop;`
+    /// - `Some("if")`: Expects `end if;`
+    /// - `Some("case")`: Expects `end case;`
+    /// - `Some("record")`: Expects `end record;`
+    /// - `Some("")`: Expects `end;` (e.g., declare blocks)
+    /// - `None`: Node doesn't have a corresponding end (e.g., variable declarations)
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::AST;
+    /// 
+    /// assert_eq!(AST::get_end_keyword("PackageNode"), Some("name"));
+    /// assert_eq!(AST::get_end_keyword("IfStatement"), Some("if"));
+    /// assert_eq!(AST::get_end_keyword("SimpleLoop"), Some("loop"));
+    /// assert_eq!(AST::get_end_keyword("DeclareNode"), Some(""));
+    /// assert_eq!(AST::get_end_keyword("ElsifStatement"), None);
+    /// ```
     pub fn get_end_keyword(node_type: &str) -> Option<&'static str> {
         match node_type {
             // Blocks that end with "end <name>;"
@@ -824,7 +1137,38 @@ impl AST {
         }
     }
 
-    /// Extracts all `end ...;` statements from the code.
+    /// Extracts all `end ...;` statements from the source code.
+    ///
+    /// This function identifies all `end` keywords followed by an optional
+    /// identifier or keyword, and a semicolon. The results are used by
+    /// `associate_end_lines_in_arena()` to match blocks with their closures.
+    ///
+    /// # Pattern Matching
+    /// - `end;` → empty word
+    /// - `end loop;` → word = "loop"
+    /// - `end My_Procedure;` → word = "My_Procedure"
+    ///
+    /// # Parameters
+    /// - `code_text`: The cleaned source code
+    ///
+    /// # Returns
+    /// - `Ok(Vec<EndStatement>)`: List of all found end statements
+    /// - `Err(ASTError::RegexError)`: If the regex pattern is invalid
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::AST;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let code = "procedure Test is\nbegin\n  null;\nend Test;";
+    /// let cleaned = AST::clean_code(code);
+    /// let ends = AST::extract_end_statements(&cleaned)?;
+    /// 
+    /// assert_eq!(ends.len(), 1);
+    /// assert_eq!(ends[0].word, "Test");
+    /// assert_eq!(ends[0].line, 4);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn extract_end_statements(code_text: &str) -> Result<Vec<EndStatement>, ASTError> {
         // FIX: Added \s* before semicolon
         let re = Regex::new(r#"(?im)^\s*end(\s+([\w\.]+))?\s*;"#) 
@@ -1315,7 +1659,18 @@ impl AST {
         Ok(nodes)
     }
 
-    /// Extracts all control flow nodes (`loop`, `while`, `for`).
+    /// Extracts all control flow nodes (loops) from the source code.
+    ///
+    /// This is a convenience wrapper that calls:
+    /// - `extract_simple_loops()`
+    /// - `extract_while_loops()`
+    /// - `extract_for_loops()`
+    ///
+    /// # Parameters
+    /// - `code_text`: The cleaned source code
+    ///
+    /// # Returns
+    /// A vector of all loop nodes found in the code.
     pub fn extract_control_flow_nodes(code_text: &str) -> Result<Vec<NodeData>,ASTError> {
         let mut new_nodes_data: Vec<NodeData> = Vec::new();
         new_nodes_data.extend(AST::extract_simple_loops(code_text)?);
@@ -1715,7 +2070,19 @@ impl AST {
     }
 
 
-    /// Extracts all statement nodes (`if`, `case`, `elsif`, `else`).
+    /// Extracts all statement nodes (if/elsif/else, case) from the source code.
+    ///
+    /// This is a convenience wrapper that calls:
+    /// - `extract_if_statements()`
+    /// - `extract_case_statements()`
+    /// - `extract_elsif_statements()`
+    /// - `extract_else_statements()`
+    ///
+    /// # Parameters
+    /// - `code_text`: The cleaned source code
+    ///
+    /// # Returns
+    /// A vector of all statement nodes found in the code.
     pub fn extract_statement_nodes(code_text: &str) -> Result<Vec<NodeData>,ASTError> {
         let mut new_nodes_data: Vec<NodeData> = Vec::new();
         new_nodes_data.extend(AST::extract_if_statements(code_text)?);
@@ -1984,9 +2351,26 @@ impl AST {
         cases
     }
 
-    /// Parses a raw parameter string (the content between parentheses)
-    /// into a vector of ArgumentData.
+    /// Parses a raw parameter string into structured `ArgumentData`.
     ///
+    /// This function handles the complex Ada parameter syntax including:
+    /// - Multiple parameters with same type: `A, B, C : Integer`
+    /// - Different modes: `in`, `out`, `in out`
+    /// - Default values: `Count : Integer := 0`
+    /// - Semicolon-separated groups
+    ///
+    /// # Parameters
+    /// - `params_opt`: The parameter string from inside parentheses, or None
+    ///
+    /// # Returns
+    /// A vector of `ArgumentData`, one per parameter name.
+    /// Returns empty vector if `params_opt` is None or empty.
+    ///
+    /// # Parsing Rules
+    /// 1. Split by semicolon to get groups
+    /// 2. For each group, split at colon to separate names from type spec
+    /// 3. Parse type spec to extract mode, type, and default value
+    /// 4. Create one `ArgumentData` per comma-separated name
     /// # Examples
     /// ```
     /// use ADA_Standards::{AST, ArgumentData};
@@ -2361,9 +2745,42 @@ impl AST {
         Ok(nodes)
     }
 
-    /// Parses a condition string into a `ConditionExpr` tree.
+    /// Parses a condition string into a structured `ConditionExpr`.
     ///
-    // This is the main entry point for the expression parser.
+    /// This is the main entry point for the expression parser. It converts
+    /// Ada conditional expressions into a tree structure that respects
+    /// operator precedence and parenthesization.
+    ///
+    /// # Features
+    /// - **Binary operators**: `and`, `or`, `and then`, `or else`, `xor`
+    /// - **Comparison**: `<`, `>`, `<=`, `>=`, `=`, `/=`
+    /// - **Membership**: `in`, `not in`
+    /// - **Unary**: `not`
+    /// - **Proper precedence**: `or else` > `and then` > comparisons
+    /// - **Parentheses**: Respected for grouping
+    ///
+    /// # Parameters
+    /// - `condition_str`: The condition expression as a string
+    ///
+    /// # Returns
+    /// A `ConditionExpr` with:
+    /// - `list`: Flat vector of all sub-expressions
+    /// - `albero`: Root of the expression tree
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::{AST, Expression, Binaries};
+    /// 
+    /// let cond = AST::parse_condition_expression("X > 10 and Y < 20");
+    /// 
+    /// // Check the root is a binary AND
+    /// if let Some(Expression::Binary(bin)) = cond.albero.as_ref().map(|b| b.as_ref()) {
+    ///     assert_eq!(bin.op, Binaries::AND);
+    /// }
+    /// 
+    /// // List contains all sub-expressions
+    /// assert_eq!(cond.list.len(), 3); // X > 10, Y < 20, and the AND itself
+    /// ```
     pub fn parse_condition_expression(condition_str: &str) -> ConditionExpr {
         let mut list = Vec::new();
         let root_expression = AST::supersplitter(condition_str.to_string(), &mut list); // Pass mut list
@@ -2467,10 +2884,19 @@ impl AST {
     }
 
 
-    /// (Internal) The recursive step of the `supersplitter` parser.
+    /// (Internal) The recursive step of the expression parser.
     ///
-    /// Given a keyword (operator), it splits the string and recursively calls
-    /// `supersplitter` on the left and/or right operands.
+    /// Given an operator and its position, this function splits the expression
+    /// and recursively calls `supersplitter` on the operands.
+    ///
+    /// # Parameters
+    /// - `keyword_str`: The operator string (e.g., "and", ">", "not")
+    /// - `condstring`: The full expression string
+    /// - `index`: Position of the operator in the string
+    /// - `lst`: Mutable reference to the flat list
+    ///
+    /// # Returns
+    /// An `Expression` node (Unary, Binary, or Membership) with recursively parsed operands.
     pub fn recursive_function(keyword_str: &str, condstring: String, index: usize, lst: &mut Vec<Expression>) -> Expression {
         let keyword = keyword_str.to_string(); // Convert to String once
         if let Some(un_keyword) = match keyword.as_str() {
@@ -2539,10 +2965,26 @@ impl AST {
     }
 
 
-    /// (Internal) The main expression parser.
+    /// (Internal) The main recursive expression parser.
     ///
-    /// Implements a simple precedence parser by splitting on the lowest-priority
-    /// operator first (e.g., `or else`, `and then`) and then recursively parsing.
+    /// Implements a precedence-climbing parser that handles Ada's operator
+    /// precedence and associativity rules. It works by:
+    /// 1. Finding the lowest-precedence operator in the expression
+    /// 2. Splitting the expression at that operator
+    /// 3. Recursively parsing the left and right operands
+    ///
+    /// # Precedence (low to high)
+    /// 1. `or else` (priority 1)
+    /// 2. `and then` (priority 1)
+    /// 3. `or`, `and`, `xor`, `not` (priority 1)
+    /// 4. Comparisons and membership (priority 0)
+    ///
+    /// # Parameters
+    /// - `condstring_in`: The expression string to parse
+    /// - `lst`: Mutable reference to the flat list (for collecting sub-expressions)
+    ///
+    /// # Returns
+    /// The root `Expression` of the parsed tree.
     pub fn supersplitter(condstring_in: String, lst: &mut Vec<Expression>) -> Expression {
         let mut number_of_open_parenthesis = 0;
         let mut number_of_closed_parenthesis = 0;
@@ -2648,7 +3090,42 @@ impl AST {
 
 
     
-    /// (Internal) Cleans Ada source code by removing comments and string literals.
+    /// Cleans Ada source code by removing comments and replacing string contents.
+    ///
+    /// This is a critical preprocessing step that:
+    /// 1. Converts tabs to spaces (4 spaces per tab)
+    /// 2. Replaces string literal contents with spaces (preserving length and quotes)
+    /// 3. Replaces comments with spaces (preserving length)
+    ///
+    /// By replacing content with spaces instead of removing it, we preserve:
+    /// - Line numbers
+    /// - Character indices
+    /// - Column positions
+    ///
+    /// This ensures that all extracted node positions match the original source.
+    ///
+    /// # Why Clean?
+    /// - Prevents regex patterns from matching inside strings or comments
+    /// - Simplifies parsing logic
+    /// - Maintains accurate position information
+    ///
+    /// # Parameters
+    /// - `raw_code`: The original Ada source code
+    ///
+    /// # Returns
+    /// A string with tabs normalized, string contents replaced, and comments replaced.
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::AST;
+    /// 
+    /// let code = r#"X : String := "end loop;"; -- comment"#;
+    /// let cleaned = AST::clean_code(code);
+    /// 
+    /// assert!(cleaned.contains("String := \"         \""));
+    /// assert!(!cleaned.contains("comment"));
+    /// assert_eq!(code.len(), cleaned.len()); // Same length!
+    /// ```
     pub fn clean_code(raw_code: &str) -> String {
         let space_to_tab_ratio = 4;
         // First, replace tabs with spaces
@@ -2688,10 +3165,46 @@ impl AST {
         cleaned_code.into_owned()
     }
 
-    // Extracts all known Ada constructs from the code text.
+    /// Extracts all known Ada constructs from the source code.
     ///
-    /// This is the main entry point for the parser. It runs all other
-    /// `extract_...` functions and returns a flat vector of all found `NodeData`.
+    /// This is the main entry point for the extraction phase. It runs all
+    /// specialized extraction functions and returns a flat vector of all
+    /// found nodes, ready to be passed to `AST::new()` and `build()`.
+    ///
+    /// # Extracted Constructs
+    /// - Packages (specs and bodies)
+    /// - Procedures and functions (specs, bodies, generics)
+    /// - Types and subtypes
+    /// - Declare blocks
+    /// - Control flow (loops: simple, while, for)
+    /// - Statements (if/elsif/else, case)
+    /// - Variables
+    /// - Tasks and entries
+    ///
+    /// # Parameters
+    /// - `code_text`: The **cleaned** source code (use `clean_code()` first)
+    ///
+    /// # Returns
+    /// - `Ok(Vec<NodeData>)`: All extracted nodes in no particular order
+    /// - `Err(ASTError)`: If any extraction function fails
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::AST;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let code = r#"
+    ///   package My_Pkg is
+    ///     procedure Do_Work;
+    ///   end My_Pkg;
+    /// "#;
+    /// let cleaned = AST::clean_code(code);
+    /// let nodes = AST::extract_all_nodes(&cleaned)?;
+    /// 
+    /// assert!(nodes.iter().any(|n| n.node_type == "PackageNode"));
+    /// assert!(nodes.iter().any(|n| n.node_type == "ProcedureNode"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn extract_all_nodes(code_text: &str) -> Result<Vec<NodeData>,ASTError> {
         let mut nodes: Vec<NodeData> = Vec::new();
         nodes.extend(AST::extract_packages(code_text)?);
@@ -2713,7 +3226,25 @@ impl AST {
         Ok(nodes)
     }
 
-    /// (Internal Helper) Recursively prints an `Expression` tree for debugging.
+    /// (Internal) Helper to recursively print an expression tree for debugging.
+    ///
+    /// Prints the tree structure with indentation to show nesting levels.
+    /// Useful for visualizing how conditions were parsed.
+    ///
+    /// # Parameters
+    /// - `nodo`: The expression node to print
+    /// - `level`: Current indentation level
+    /// - `prefix`: Prefix string (e.g., "L---" for left child, "R---" for right)
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use ADA_Standards::AST;
+    /// 
+    /// let cond = AST::parse_condition_expression("X > 10 and Y < 20");
+    /// if let Some(root) = &cond.albero {
+    ///     AST::leggitree(root, 0, "Root: ");
+    /// }
+    /// ```
     pub fn leggitree(nodo: &Expression, level: u32, prefix: &str) {
         match nodo {
             Expression::Binary(binary_expr) => {
@@ -2745,11 +3276,37 @@ impl AST {
     }
 
 
-    // ... (new, root_id, arena, build, print_tree, output_tree are documented) ...
-
-    /// Finds the first node in the arena that matches a given name and type.
+    /// Finds the first node in the arena matching a given name and type.
     ///
-    /// This is a helper for testing and analysis.
+    /// This is a convenience method for querying the AST. It performs a depth-first
+    /// search starting from the root to find the first node that matches both criteria.
+    ///
+    /// # Parameters
+    /// - `name`: The node name to search for (exact match)
+    /// - `node_type`: The node type to search for (exact match)
+    ///
+    /// # Returns
+    /// - `Some(NodeId)`: The ID of the first matching node
+    /// - `None`: If no matching node is found
+    ///
+    /// # Examples
+    /// ```
+    /// use ADA_Standards::AST;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let code = "procedure MyProc is\nbegin\n  null;\nend MyProc;";
+    /// let cleaned = AST::clean_code(code);
+    /// let nodes = AST::extract_all_nodes(&cleaned)?;
+    /// let mut ast = AST::new(nodes);
+    /// ast.build(&cleaned)?;
+    /// 
+    /// if let Some(proc_id) = ast.find_node_by_name_and_type("MyProc", "ProcedureNode") {
+    ///     let proc = ast.arena().get(proc_id).unwrap().get();
+    ///     assert_eq!(proc.name, "MyProc");
+    ///     assert_eq!(proc.is_body, Some(true));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn find_node_by_name_and_type(&self, name: &str, node_type: &str) -> Option<NodeId> {
         self.root_id.descendants(&self.arena).find(|&node_id| {
             let node = self.arena.get(node_id).unwrap().get();
