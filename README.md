@@ -43,7 +43,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ADA_Standards = "1.2."
+ADA_Standards = "1.2.2"
 ```
 
 Or use cargo:
@@ -337,7 +337,7 @@ Licensed under the MIT License. See [LICENSE-MIT](LICENSE-MIT) for details.
 - Currently mastering Rust and seeking opportunities in the field
 - Website: [https://frontinus.github.io/](https://frontinus.github.io/)
 - Email: francesco1.abate@yahoo.com
-- LinkedIn: [Connect with me](https://www.linkedin.com/in/francesco-abate)
+- LinkedIn: [Connect with me](https://www.linkedin.com/in/francesco-abate-79601719b/)
 
 ## 🙏 Acknowledgments
 
